@@ -5,5 +5,6 @@ export default [
   route("batch", "routes/batch.tsx"),
   route("discover", "routes/discover.tsx"),
   route("search", "routes/search.tsx"),
+  route("api/extension/prospect", "routes/api.extension.prospect.ts"),
   route("prospects/:id", "routes/prospect.$id.tsx"),
 ] satisfies RouteConfig;

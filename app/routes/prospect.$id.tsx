@@ -1,8 +1,8 @@
 import { Form, Link, redirect, useLoaderData } from "react-router";
-import { Archive, ArrowLeft, CalendarCheck, Check, Clipboard, ExternalLink, LinkIcon, RefreshCw, Save, Send, SkipForward, UserCheck } from "lucide-react";
+import { Archive, ArrowLeft, CalendarCheck, Check, Clipboard, ExternalLink, LinkIcon, MessageSquareReply, RefreshCw, Save, Send, SkipForward, Undo2, UserCheck } from "lucide-react";
 
 import type { Route } from "./+types/prospect.$id";
-import { getProspectDetail, runProspectAction, type Prospect, type Task } from "~/lib/outreach.server";
+import { getProspectDetail, runProspectAction, type Prospect, type Reply, type Task } from "~/lib/outreach.server";
 
 export const meta: Route.MetaFunction = ({ data }) => {
   const name = data?.detail?.prospect?.name || "Prospect";
@@ -21,14 +21,21 @@ export function loader({ params }: Route.LoaderArgs) {
 export async function action({ request, params }: Route.ActionArgs) {
   const formData = await request.formData();
   await runProspectAction(formData);
+  if (String(formData.get("intent") || "") === "deleteProspect") {
+    return redirect("/");
+  }
   return redirect(`/prospects/${params.id}`);
 }
 
 export default function ProspectDetail() {
   const { detail } = useLoaderData<typeof loader>();
-  const { prospect, tasks, events, today } = detail;
+  const { prospect, tasks, events, replies, today } = detail;
   const openTasks = tasks.filter((task) => task.status === "open");
   const doneTasks = tasks.filter((task) => task.status !== "open");
+  const showConnectionNote = prospect.outreach_mode !== "no_note" || prospect.connection_note_sent === 1;
+  const connectionLocked = Boolean(prospect.connection_sent_date);
+  const reportLocked = Boolean(prospect.report_sent_date);
+  const archiveMode = Boolean(prospect.report_sent_date) || ["reply_sent", "followup_sent"].includes(prospect.status);
 
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-8 text-stone-950 sm:px-6 lg:px-8">
@@ -51,6 +58,8 @@ export default function ProspectDetail() {
             <Badge>Wave {prospect.wave || "-"}</Badge>
             <Badge tone={prospect.outreach_mode === "no_note" ? "blue" : "green"}>{outreachModeLabel(prospect)}</Badge>
             <Badge tone="blue">{prospect.status}</Badge>
+            <ArchiveControls prospect={prospect} />
+            <DeleteProspectButton prospect={prospect} />
           </div>
         </header>
 
@@ -63,8 +72,7 @@ export default function ProspectDetail() {
               </div>
             </section>
 
-            <section className="rounded-lg border border-stone-300 bg-white p-5">
-              <SectionTitle title="Outreach mode" detail="Switch the copy strategy before sending." />
+            <CollapsibleSection title="Outreach mode" detail="Switch the copy strategy before sending." defaultOpen={!archiveMode}>
               <div className="mt-4 grid gap-3 rounded-lg border border-stone-200 bg-stone-50 p-4">
                 <div>
                   <p className="font-semibold">{outreachModeLabel(prospect)}</p>
@@ -79,12 +87,41 @@ export default function ProspectDetail() {
                   <ActionButton intent="switchToWithNoteMode" prospectId={prospect.id} label="Use with-note mode" icon={<Send size={16} />} primary={prospect.outreach_mode === "no_note"} />
                 </div>
               </div>
-            </section>
+            </CollapsibleSection>
 
-            <section className="rounded-lg border border-stone-300 bg-white p-5">
-              <SectionTitle title="Brief" detail="Topic and shared URL." />
+            <CollapsibleSection title="Brief" detail="Topic, preparation notes and shared URL." defaultOpen={!archiveMode}>
               <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <InfoBlock title="Topic" value={prospect.brief_topic || "No brief topic"} detail={prospect.preparation_notes || undefined} />
+                <Form method="post" className="border-t border-stone-200 pt-3">
+                  <input type="hidden" name="intent" value="updateBriefStrategy" />
+                  <input type="hidden" name="prospectId" value={prospect.id} />
+                  <label className="text-sm font-semibold" htmlFor="briefTopic">
+                    Topic
+                  </label>
+                  <input
+                    id="briefTopic"
+                    name="briefTopic"
+                    defaultValue={prospect.brief_topic || ""}
+                    required
+                    maxLength={80}
+                    placeholder="Narrative risk"
+                    className="mt-2 min-h-10 w-full rounded-md border border-stone-300 bg-stone-50 px-3 outline-none focus:border-teal-700"
+                  />
+                  <label className="mt-3 block text-sm font-semibold" htmlFor="briefPreparation">
+                    Preparation notes
+                  </label>
+                  <textarea
+                    id="briefPreparation"
+                    name="briefPreparation"
+                    defaultValue={prospect.preparation_notes || ""}
+                    rows={4}
+                    placeholder="Why this subject fits the profile, source signal, angle to prepare..."
+                    className="mt-2 min-h-28 w-full resize-y rounded-md border border-stone-300 bg-stone-50 px-3 py-2 outline-none focus:border-teal-700"
+                  />
+                  <button className="mt-3 inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 font-medium hover:border-teal-700">
+                    <Save size={16} />
+                    Save brief theme
+                  </button>
+                </Form>
                 <div className="border-t border-stone-200 pt-3">
                   <p className="text-sm font-semibold">Shared URL</p>
                   {prospect.shared_url ? (
@@ -111,15 +148,25 @@ export default function ProspectDetail() {
                   )}
                 </div>
               </div>
-            </section>
+            </CollapsibleSection>
+
+            <CollapsibleSection title="Messages" detail="Copy exact LinkedIn copy." defaultOpen={!archiveMode}>
+              <div className="mt-4 grid gap-3">
+                {showConnectionNote ? <MessageEditor prospectId={prospect.id} title="Connection note" type="connection" content={prospect.connection_message} locked={connectionLocked} /> : <NoNoteCallout />}
+                <MessageEditor
+                  prospectId={prospect.id}
+                  title={prospect.outreach_mode === "no_note" ? "First message after acceptance" : "After acceptance"}
+                  type={prospect.outreach_mode === "no_note" ? "report_no_note" : "report"}
+                  content={prospect.post_acceptance_message}
+                  locked={reportLocked}
+                />
+                <MessageEditor prospectId={prospect.id} title="Follow-up J+5" type="followup" content={prospect.followup_message} />
+              </div>
+            </CollapsibleSection>
 
             <section className="rounded-lg border border-stone-300 bg-white p-5">
-              <SectionTitle title="Messages" detail="Copy exact LinkedIn copy." />
-              <div className="mt-4 grid gap-3">
-                <MessageBlock title="Connection note" content={prospect.connection_message} />
-                <MessageBlock title={prospect.outreach_mode === "no_note" ? "First message after acceptance" : "After acceptance"} content={prospect.post_acceptance_message} />
-                <MessageBlock title="Follow-up J+5" content={prospect.followup_message} />
-              </div>
+              <SectionTitle title="Reply handling" detail="If Marc replies, paste it here and answer instead of following up." />
+              <ReplyPanel prospect={prospect} replies={replies} />
             </section>
 
             <section className="rounded-lg border border-stone-300 bg-white p-5">
@@ -180,6 +227,15 @@ function OpenTask({ task, prospect, today }: { task: Task; prospect: Prospect; t
 
 function taskActions(task: Task, prospect: Prospect) {
   if (task.type === "send_connection") {
+    if (prospect.outreach_mode === "no_note") {
+      return (
+        <>
+          <ActionButton intent="markConnectionSentWithoutNote" prospectId={prospect.id} label="Sent without note" icon={<UserCheck size={16} />} primary />
+          <CopyButton label="Copy note" value={prospect.connection_message || ""} />
+          <ActionButton intent="markConnectionSentWithNote" prospectId={prospect.id} label="Sent with note" icon={<Send size={16} />} />
+        </>
+      );
+    }
     return (
       <>
         <CopyButton label="Copy note" value={prospect.connection_message || ""} />
@@ -239,6 +295,17 @@ function SectionTitle({ title, detail }: { title: string; detail: string }) {
   );
 }
 
+function CollapsibleSection({ title, detail, defaultOpen, children }: { title: string; detail: string; defaultOpen: boolean; children: React.ReactNode }) {
+  return (
+    <details className="rounded-lg border border-stone-300 bg-white p-5" open={defaultOpen}>
+      <summary className="cursor-pointer list-none">
+        <SectionTitle title={title} detail={detail} />
+      </summary>
+      {children}
+    </details>
+  );
+}
+
 function InfoBlock({ title, value, detail }: { title: string; value: string; detail?: string }) {
   return (
     <div className="border-t border-stone-200 pt-3">
@@ -249,15 +316,135 @@ function InfoBlock({ title, value, detail }: { title: string; value: string; det
   );
 }
 
-function MessageBlock({ title, content }: { title: string; content: string | null }) {
+function MessageEditor({ prospectId, title, type, content, locked = false }: { prospectId: number; title: string; type: string; content: string | null; locked?: boolean }) {
   if (!content) return null;
+  if (locked) return <ReadonlyMessage title={title} content={content} />;
+  return (
+    <Form method="post" className="border-t border-stone-200 pt-3">
+      <input type="hidden" name="intent" value="updateMessage" />
+      <input type="hidden" name="prospectId" value={prospectId} />
+      <input type="hidden" name="messageType" value={type} />
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold">{title}</p>
+        <div className="flex gap-2">
+          <CopyButton label="Copy" value={content} compact />
+          <button className="inline-flex min-h-8 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-2 text-sm font-medium text-stone-800 hover:border-teal-700">
+            <Save size={14} />
+            Save
+          </button>
+        </div>
+      </div>
+      <textarea
+        name="messageContent"
+        defaultValue={content}
+        rows={Math.max(3, Math.min(8, content.split("\n").length + 1))}
+        className="mt-2 min-h-28 w-full resize-y rounded-md border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700 outline-none focus:border-teal-700"
+      />
+    </Form>
+  );
+}
+
+function ReadonlyMessage({ title, content }: { title: string; content: string }) {
   return (
     <div className="border-t border-stone-200 pt-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold">{title}</p>
+        <div>
+          <p className="text-sm font-semibold">{title}</p>
+          <p className="mt-1 text-xs font-medium text-stone-500">Sent. Locked to preserve history.</p>
+        </div>
         <CopyButton label="Copy" value={content} compact />
       </div>
       <p className="mt-2 whitespace-pre-wrap rounded-md border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700">{content}</p>
+    </div>
+  );
+}
+
+function ReplyPanel({ prospect, replies }: { prospect: Prospect; replies: Reply[] }) {
+  const latest = replies[0];
+  return (
+    <div className="mt-4 grid gap-4">
+      {latest ? <ReplyEditor prospect={prospect} reply={latest} /> : null}
+      <Form method="post" className="rounded-lg border border-stone-200 bg-stone-50 p-4">
+        <input type="hidden" name="intent" value="addProspectReply" />
+        <input type="hidden" name="prospectId" value={prospect.id} />
+        <label className="text-sm font-semibold" htmlFor="inboundContent">
+          Prospect reply
+        </label>
+        <textarea
+          id="inboundContent"
+          name="inboundContent"
+          rows={4}
+          required
+          placeholder="Paste the LinkedIn reply here..."
+          className="mt-2 min-h-28 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-700"
+        />
+        <label className="mt-3 block text-sm font-semibold" htmlFor="suggestedResponse">
+          Draft response
+        </label>
+        <textarea
+          id="suggestedResponse"
+          name="suggestedResponse"
+          rows={4}
+          placeholder="Optional. Leave empty and the app will create a lightweight fallback."
+          className="mt-2 min-h-28 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-700"
+        />
+        <button className="mt-3 inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-3 font-medium text-white hover:bg-teal-800">
+          <MessageSquareReply size={16} />
+          Save reply
+        </button>
+      </Form>
+    </div>
+  );
+}
+
+function ReplyEditor({ prospect, reply }: { prospect: Prospect; reply: Reply }) {
+  return (
+    <div className="rounded-lg border border-stone-200 bg-stone-50 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold">Latest reply</p>
+          <p className="mt-1 text-xs text-stone-500">{reply.created_at}</p>
+        </div>
+        {reply.sent_at ? <Badge tone="green">sent {reply.sent_at}</Badge> : <Badge tone="blue">response draft</Badge>}
+      </div>
+      <p className="mt-3 whitespace-pre-wrap rounded-md border border-stone-200 bg-white p-3 text-sm text-stone-700">{reply.inbound_content}</p>
+      <Form method="post" className="mt-3">
+        <input type="hidden" name="intent" value="updateReplyResponse" />
+        <input type="hidden" name="prospectId" value={prospect.id} />
+        <input type="hidden" name="replyId" value={reply.id} />
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold">Response to send</p>
+          <div className="flex gap-2">
+            <CopyButton label="Copy" value={reply.suggested_response || ""} compact />
+            <button className="inline-flex min-h-8 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-2 text-sm font-medium text-stone-800 hover:border-teal-700">
+              <Save size={14} />
+              Save
+            </button>
+          </div>
+        </div>
+        <textarea
+          name="suggestedResponse"
+          defaultValue={reply.suggested_response || ""}
+          rows={5}
+          required
+          disabled={Boolean(reply.sent_at)}
+          className="mt-2 min-h-28 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-700 disabled:bg-stone-100 disabled:text-stone-500"
+        />
+      </Form>
+      {!reply.sent_at ? (
+        <ActionButton intent="markReplySent" prospectId={prospect.id} label="Mark response sent" icon={<Check size={16} />} primary extra={{ replyId: String(reply.id) }} />
+      ) : null}
+    </div>
+  );
+}
+
+function NoNoteCallout() {
+  return (
+    <div className="border-t border-stone-200 pt-3">
+      <p className="text-sm font-semibold">Connection note</p>
+      <p className="mt-2 rounded-md border border-stone-200 bg-stone-50 p-3 text-sm text-stone-600">
+        No custom note was sent. Use the first message after acceptance instead.
+      </p>
     </div>
   );
 }
@@ -279,6 +466,7 @@ function ActionButton({
   icon,
   primary = false,
   danger = false,
+  extra,
 }: {
   intent: string;
   prospectId: number;
@@ -286,6 +474,7 @@ function ActionButton({
   icon: React.ReactNode;
   primary?: boolean;
   danger?: boolean;
+  extra?: Record<string, string>;
 }) {
   const className = primary
     ? "border-teal-700 bg-teal-700 text-white hover:bg-teal-800"
@@ -297,12 +486,38 @@ function ActionButton({
     <Form method="post">
       <input type="hidden" name="intent" value={intent} />
       <input type="hidden" name="prospectId" value={prospectId} />
+      {extra ? Object.entries(extra).map(([key, value]) => <input key={key} type="hidden" name={key} value={value} />) : null}
       <button className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium ${className}`}>
         {icon}
         {label}
       </button>
     </Form>
   );
+}
+
+function DeleteProspectButton({ prospect }: { prospect: Prospect }) {
+  return (
+    <Form
+      method="post"
+      onSubmit={(event) => {
+        const confirmed = window.confirm(`Delete ${prospect.name} from the outreach database? This cannot be undone.`);
+        if (!confirmed) event.preventDefault();
+      }}
+    >
+      <input type="hidden" name="intent" value="deleteProspect" />
+      <input type="hidden" name="prospectId" value={prospect.id} />
+      <button className="inline-flex min-h-8 items-center justify-center rounded-full bg-red-50 px-2.5 text-xs font-semibold text-red-800 hover:bg-red-100">
+        Delete
+      </button>
+    </Form>
+  );
+}
+
+function ArchiveControls({ prospect }: { prospect: Prospect }) {
+  if (prospect.status === "archived") {
+    return <ActionButton intent="reopenConversation" prospectId={prospect.id} label="Reopen" icon={<Undo2 size={14} />} />;
+  }
+  return <ActionButton intent="archiveProspect" prospectId={prospect.id} label="Archive" icon={<Archive size={14} />} danger />;
 }
 
 function CopyButton({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {

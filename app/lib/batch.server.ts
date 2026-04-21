@@ -9,6 +9,8 @@ type RawProspect = {
   position: string;
   profileUrl: string;
   about: string;
+  signals: string;
+  briefDirection: string;
 };
 
 export type BatchAnalysis = {
@@ -80,6 +82,43 @@ export async function analyzeProspectTable(tableText: string): Promise<BatchAnal
   return normalizeAnalysis(parseJson(content), prospects.length);
 }
 
+export function prospectEvidenceToTable(profile: {
+  name?: string;
+  position?: string;
+  profileUrl?: string;
+  about?: string;
+  signals?: string;
+  briefDirection?: string;
+  experience?: string;
+  education?: string;
+  activity?: string;
+  rawText?: string;
+}) {
+  const evidence = [
+    profile.signals,
+    profile.activity ? `Activity: ${profile.activity}` : "",
+    profile.experience ? `Experience: ${profile.experience}` : "",
+    profile.education ? `Education: ${profile.education}` : "",
+    profile.rawText ? `Visible page text: ${profile.rawText}` : "",
+  ].filter(Boolean).join("\n\n");
+
+  const header = ["Name", "Position", "Profile URL", "About", "Signals", "Brief direction"];
+  const row = [
+    profile.name || "",
+    profile.position || "",
+    profile.profileUrl || "",
+    profile.about || "",
+    evidence,
+    profile.briefDirection || "",
+  ].map(cleanCell).join("\t");
+
+  return [header.join("\t"), row].join("\n");
+}
+
+function cleanCell(value: string) {
+  return String(value || "").replace(/\t/g, " ").replace(/\r?\n/g, " ").trim();
+}
+
 function loadLocalEnv() {
   const envPath = path.join(repoRoot, "outreach-app", ".env");
   if (!fs.existsSync(envPath)) return;
@@ -111,10 +150,20 @@ TASK
 - Write all outreach messages in English by default: connectionMessage, reportMessage, noNoteReportMessage, and followupMessage.
 - Do not use French greetings or French message templates unless the input explicitly requests French. For now, assume English.
 - Use brief topics of 1 to 3 words only.
+- A brief topic is not the prospect's broad profession. It must be a concrete Tempolis brief subject: a figure, movement, issue, policy, controversy, narrative risk, or public debate.
+- Never use vague discipline labels as briefTopic: "public policy", "policy", "communications", "public affairs", "EU affairs", "regulation", "strategy".
+- If the user provides briefDirection, treat it as the strongest hint. If they provide signals/recent posts, use them to choose the topic.
+- Good briefTopic examples: "AI Act", "Energy security", "Tech backlash", "EU competitiveness", "Strategic autonomy", "Narrative risk", "Trade tensions".
 - Respect the outreach rule: no product pitch, no demo/call request, short connection note under 300 characters.
 - Generate two post-acceptance variants:
   - reportMessage assumes a custom connection note was sent and may refer to the promised brief.
   - noNoteReportMessage assumes no custom connection note was sent; it must open naturally with "Thanks for connecting" or equivalent and must not say "as promised" or "the brief I mentioned".
+- Make noNoteReportMessage genuinely adapted to the prospect:
+  - Use their role, company context, about field, signals, briefDirection, rationale, recommendedTemplate and briefTopic to pick one concrete angle.
+  - Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format.
+  - Explain why the brief is relevant to their world in one specific phrase.
+  - Ask for feedback on angle, signal quality, or format, not generic "thoughts".
+  - Avoid filler phrases: "key topics", "professionals like yourself", "might be of interest", "any initial thoughts", "greatly appreciated".
 - Generate the J+5 follow-up.
 - Do not invent facts beyond the profile fields.
 
@@ -174,6 +223,8 @@ function parseProspectTable(input: string): RawProspect[] {
         position: clean(row.position),
         profileUrl: clean(row.profileurl || row.profile || row.linkedin || row.url),
         about: clean(row.about),
+        signals: clean(row.signals || row.recentposts || row.posts || row.activity || row.evidence),
+        briefDirection: clean(row.briefdirection || row.briefseed || row.topicseed || row.suggestedtopic || row.preferredtopic),
       };
     })
     .filter((row) => row.name && row.profileUrl);
@@ -248,7 +299,8 @@ function normalizeAnalysis(value: unknown, total: number): BatchAnalysis {
 function normalizeProspect(item: Partial<AnalyzedProspect>): AnalyzedProspect {
   const tag = ["LEARN", "WARM", "SAVE", "SKIP"].includes(String(item.priorityTag)) ? item.priorityTag : "SKIP";
   const wave = typeof item.wave === "number" ? item.wave : null;
-  const briefTopic = clean(item.briefTopic).split(/\s+/).slice(0, 3).join(" ");
+  const rawBriefTopic = clean(item.briefTopic).split(/\s+/).slice(0, 3).join(" ");
+  const briefTopic = isGenericBriefTopic(rawBriefTopic) ? fallbackBriefTopic(item) : rawBriefTopic;
   const firstName = clean(item.name).split(/\s+/)[0] || clean(item.name);
   const connectionMessage = enforceEnglish(
     clean(item.connectionMessage),
@@ -264,16 +316,8 @@ As promised, the brief on ${briefTopic || "your policy area"}: what public disco
 
 I'm testing it with public affairs profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`,
   );
-  const noNoteReportMessage = noPriorNoteCopy(enforceEnglish(
-    clean(item.noNoteReportMessage),
-    `Hi ${firstName},
-
-Thanks for connecting. I prepared a short brief on ${briefTopic || "your policy area"}: what public discourse is saying over the last 24 hours, outside media coverage.
-
-[shared link]
-
-I'm testing this with public affairs and policy profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`,
-  ), firstName, briefTopic);
+  const noNoteFallback = noNoteFallbackCopy(firstName, briefTopic, item.position, item.about, item.recommendedTemplate);
+  const noNoteReportMessage = noPriorNoteCopy(enforceEnglish(clean(item.noNoteReportMessage), noNoteFallback), noNoteFallback);
   const followupMessage = enforceEnglish(
     clean(item.followupMessage),
     `Hi ${firstName}, following up in case the brief slipped through. No worries if this isn't the right timing.`,
@@ -315,15 +359,58 @@ function enforceEnglish(value: string, fallback: string) {
   return frenchMarkers.some((marker) => lower.includes(marker)) ? fallback : value;
 }
 
-function noPriorNoteCopy(value: string, firstName: string, briefTopic: string) {
-  if (!/\b(as promised|brief i mentioned|brief i promised|comme promis|brief promis)\b/i.test(value)) return value;
+function noPriorNoteCopy(value: string, fallback: string) {
+  if (!/\b(as promised|brief i mentioned|brief i promised|comme promis|brief promis|key topics|professionals like yourself|might be of interest|any initial thoughts|greatly appreciated)\b/i.test(value)) return value;
+  return fallback;
+}
+
+function isGenericBriefTopic(value: string) {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  return [
+    "policy",
+    "public policy",
+    "communications",
+    "public affairs",
+    "eu affairs",
+    "regulation",
+    "strategy",
+    "stakeholder management",
+  ].includes(normalized);
+}
+
+function fallbackBriefTopic(item: Partial<AnalyzedProspect>) {
+  const text = `${clean(item.position)} ${clean(item.about)} ${clean(item.rationale)} ${clean(item.recommendedTemplate)}`.toLowerCase();
+  if (/\b(ai|artificial intelligence|ai act)\b/.test(text)) return "AI Act";
+  if (/\b(energy|climate|grid|power)\b/.test(text)) return "Energy security";
+  if (/\b(competitiveness|industry|industrial)\b/.test(text)) return "EU competitiveness";
+  if (/\b(trade|tariff|canada|market access)\b/.test(text)) return "Trade tensions";
+  if (/\b(privacy|gdpr|data)\b/.test(text)) return "Data privacy";
+  if (/\b(digital|tech|platform)\b/.test(text)) return "Tech regulation";
+  if (/\b(communications|comms|reputation|narrative|editorial)\b/.test(text)) return "Narrative risk";
+  return "Policy backlash";
+}
+
+function noNoteFallbackCopy(firstName: string, briefTopic: string, position?: unknown, about?: unknown, template?: unknown) {
+  const topic = briefTopic || "your policy area";
+  const context = prospectContext(position, about, template);
   return `Hi ${firstName},
 
-Thanks for connecting. I prepared a short brief on ${briefTopic || "your policy area"}: what public discourse is saying over the last 24 hours, outside media coverage.
+Thanks for connecting. I'm building Tempolis, a tool for public affairs narrative briefs, and I prepared a short brief on ${topic} because it seems close to your work on ${context}.
 
 [shared link]
 
-I'm testing this with public affairs and policy profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`;
+If the angle feels useful, or if the signal is off for your workflow, your feedback would be very helpful.`;
+}
+
+function prospectContext(position?: unknown, about?: unknown, template?: unknown) {
+  const text = `${clean(position)} ${clean(about)} ${clean(template)}`.toLowerCase();
+  if (/\b(ai|artificial intelligence|digital|tech|technology|platform|data|privacy|gdpr)\b/.test(text)) return "tech policy and regulation";
+  if (/\b(energy|climate|sustainability|power|grid)\b/.test(text)) return "energy and policy strategy";
+  if (/\b(health|pharma|medical|biotech)\b/.test(text)) return "health policy and public affairs";
+  if (/\b(finance|bank|fintech|payments|competition)\b/.test(text)) return "regulated markets and public affairs";
+  if (/\b(communications|comms|media|narrative|reputation)\b/.test(text)) return "strategic communications";
+  if (/\b(government affairs|public affairs|policy|regulatory|eu affairs|brussels)\b/.test(text)) return "public affairs and policy";
+  return "policy and public affairs";
 }
 
 function normalizeHeader(value: string) {

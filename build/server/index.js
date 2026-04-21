@@ -1,11 +1,10 @@
 import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { PassThrough } from "node:stream";
 import { createReadableStreamFromReadable } from "@react-router/node";
-import { ServerRouter, UNSAFE_withComponentProps, Outlet, UNSAFE_withErrorBoundaryProps, useRouteError, isRouteErrorResponse, Meta, Links, ScrollRestoration, Scripts, useLoaderData, Link, redirect, useActionData, Form, useSearchParams } from "react-router";
+import { ServerRouter, UNSAFE_withComponentProps, Outlet, UNSAFE_withErrorBoundaryProps, useRouteError, isRouteErrorResponse, Meta, Links, ScrollRestoration, Scripts, useLoaderData, Link as Link$1, redirect, useActionData, Form, useSearchParams, data } from "react-router";
 import { isbot } from "isbot";
 import { renderToPipeableStream } from "react-dom/server";
-import { Sun, Moon, Search, UserPlus, Plus, Clock, ArrowLeft, Trash2, Brain, Send, CheckCircle2, Clipboard, Copy, ExternalLink, LinkIcon, UserCheck, Archive, Check, CalendarCheck } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useContext, createContext, forwardRef, createElement, useState, useEffect } from "react";
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
@@ -66,6 +65,254 @@ const entryServer = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineP
   default: handleRequest,
   streamTimeout
 }, Symbol.toStringTag, { value: "Module" }));
+const mergeClasses = (...classes) => classes.filter((className, index, array) => {
+  return Boolean(className) && className.trim() !== "" && array.indexOf(className) === index;
+}).join(" ").trim();
+const toKebabCase = (string) => string.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+const toCamelCase = (string) => string.replace(
+  /^([A-Z])|[\s-_]+(\w)/g,
+  (match, p1, p2) => p2 ? p2.toUpperCase() : p1.toLowerCase()
+);
+const toPascalCase = (string) => {
+  const camelCase = toCamelCase(string);
+  return camelCase.charAt(0).toUpperCase() + camelCase.slice(1);
+};
+var defaultAttributes = {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: 24,
+  height: 24,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round"
+};
+const hasA11yProp = (props) => {
+  for (const prop in props) {
+    if (prop.startsWith("aria-") || prop === "role" || prop === "title") {
+      return true;
+    }
+  }
+  return false;
+};
+const LucideContext = createContext({});
+const useLucideContext = () => useContext(LucideContext);
+const Icon = forwardRef(
+  ({ color, size, strokeWidth, absoluteStrokeWidth, className = "", children, iconNode, ...rest }, ref) => {
+    const {
+      size: contextSize = 24,
+      strokeWidth: contextStrokeWidth = 2,
+      absoluteStrokeWidth: contextAbsoluteStrokeWidth = false,
+      color: contextColor = "currentColor",
+      className: contextClass = ""
+    } = useLucideContext() ?? {};
+    const calculatedStrokeWidth = absoluteStrokeWidth ?? contextAbsoluteStrokeWidth ? Number(strokeWidth ?? contextStrokeWidth) * 24 / Number(size ?? contextSize) : strokeWidth ?? contextStrokeWidth;
+    return createElement(
+      "svg",
+      {
+        ref,
+        ...defaultAttributes,
+        width: size ?? contextSize ?? defaultAttributes.width,
+        height: size ?? contextSize ?? defaultAttributes.height,
+        stroke: color ?? contextColor,
+        strokeWidth: calculatedStrokeWidth,
+        className: mergeClasses("lucide", contextClass, className),
+        ...!children && !hasA11yProp(rest) && { "aria-hidden": "true" },
+        ...rest
+      },
+      [
+        ...iconNode.map(([tag, attrs]) => createElement(tag, attrs)),
+        ...Array.isArray(children) ? children : [children]
+      ]
+    );
+  }
+);
+const createLucideIcon = (iconName, iconNode) => {
+  const Component = forwardRef(
+    ({ className, ...props }, ref) => createElement(Icon, {
+      ref,
+      iconNode,
+      className: mergeClasses(
+        `lucide-${toKebabCase(toPascalCase(iconName))}`,
+        `lucide-${iconName}`,
+        className
+      ),
+      ...props
+    })
+  );
+  Component.displayName = toPascalCase(iconName);
+  return Component;
+};
+const __iconNode$m = [
+  ["rect", { width: "20", height: "5", x: "2", y: "3", rx: "1", key: "1wp1u1" }],
+  ["path", { d: "M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8", key: "1s80jp" }],
+  ["path", { d: "M10 12h4", key: "a56b0p" }]
+];
+const Archive = createLucideIcon("archive", __iconNode$m);
+const __iconNode$l = [
+  ["path", { d: "m12 19-7-7 7-7", key: "1l729n" }],
+  ["path", { d: "M19 12H5", key: "x3x0zl" }]
+];
+const ArrowLeft = createLucideIcon("arrow-left", __iconNode$l);
+const __iconNode$k = [
+  ["path", { d: "M12 18V5", key: "adv99a" }],
+  ["path", { d: "M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4", key: "1e3is1" }],
+  ["path", { d: "M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5", key: "1gqd8o" }],
+  ["path", { d: "M17.997 5.125a4 4 0 0 1 2.526 5.77", key: "iwvgf7" }],
+  ["path", { d: "M18 18a4 4 0 0 0 2-7.464", key: "efp6ie" }],
+  ["path", { d: "M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517", key: "1gq6am" }],
+  ["path", { d: "M6 18a4 4 0 0 1-2-7.464", key: "k1g0md" }],
+  ["path", { d: "M6.003 5.125a4 4 0 0 0-2.526 5.77", key: "q97ue3" }]
+];
+const Brain = createLucideIcon("brain", __iconNode$k);
+const __iconNode$j = [
+  ["path", { d: "M8 2v4", key: "1cmpym" }],
+  ["path", { d: "M16 2v4", key: "4m81vk" }],
+  ["rect", { width: "18", height: "18", x: "3", y: "4", rx: "2", key: "1hopcy" }],
+  ["path", { d: "M3 10h18", key: "8toen8" }],
+  ["path", { d: "m9 16 2 2 4-4", key: "19s6y9" }]
+];
+const CalendarCheck = createLucideIcon("calendar-check", __iconNode$j);
+const __iconNode$i = [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]];
+const Check = createLucideIcon("check", __iconNode$i);
+const __iconNode$h = [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
+  ["path", { d: "m9 12 2 2 4-4", key: "dzmm74" }]
+];
+const CircleCheck = createLucideIcon("circle-check", __iconNode$h);
+const __iconNode$g = [
+  ["rect", { width: "8", height: "4", x: "8", y: "2", rx: "1", ry: "1", key: "tgr4d6" }],
+  [
+    "path",
+    {
+      d: "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2",
+      key: "116196"
+    }
+  ]
+];
+const Clipboard = createLucideIcon("clipboard", __iconNode$g);
+const __iconNode$f = [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
+  ["path", { d: "M12 6v6l4 2", key: "mmk7yg" }]
+];
+const Clock = createLucideIcon("clock", __iconNode$f);
+const __iconNode$e = [
+  ["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2", key: "17jyea" }],
+  ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2", key: "zix9uf" }]
+];
+const Copy = createLucideIcon("copy", __iconNode$e);
+const __iconNode$d = [
+  ["path", { d: "M15 3h6v6", key: "1q9fwt" }],
+  ["path", { d: "M10 14 21 3", key: "gplh6r" }],
+  ["path", { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6", key: "a6xqqp" }]
+];
+const ExternalLink = createLucideIcon("external-link", __iconNode$d);
+const __iconNode$c = [
+  ["path", { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71", key: "1cjeqo" }],
+  ["path", { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71", key: "19qd67" }]
+];
+const Link = createLucideIcon("link", __iconNode$c);
+const __iconNode$b = [
+  [
+    "path",
+    {
+      d: "M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z",
+      key: "18887p"
+    }
+  ],
+  ["path", { d: "m10 8-3 3 3 3", key: "fp6dz7" }],
+  ["path", { d: "M17 14v-1a2 2 0 0 0-2-2H7", key: "1tkjnz" }]
+];
+const MessageSquareReply = createLucideIcon("message-square-reply", __iconNode$b);
+const __iconNode$a = [
+  [
+    "path",
+    {
+      d: "M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401",
+      key: "kfwtm"
+    }
+  ]
+];
+const Moon = createLucideIcon("moon", __iconNode$a);
+const __iconNode$9 = [
+  ["path", { d: "M5 12h14", key: "1ays0h" }],
+  ["path", { d: "M12 5v14", key: "s699le" }]
+];
+const Plus = createLucideIcon("plus", __iconNode$9);
+const __iconNode$8 = [
+  ["path", { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8", key: "v9h5vc" }],
+  ["path", { d: "M21 3v5h-5", key: "1q7to0" }],
+  ["path", { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16", key: "3uifl3" }],
+  ["path", { d: "M8 16H3v5", key: "1cv678" }]
+];
+const RefreshCw = createLucideIcon("refresh-cw", __iconNode$8);
+const __iconNode$7 = [
+  [
+    "path",
+    {
+      d: "M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z",
+      key: "1c8476"
+    }
+  ],
+  ["path", { d: "M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7", key: "1ydtos" }],
+  ["path", { d: "M7 3v4a1 1 0 0 0 1 1h7", key: "t51u73" }]
+];
+const Save = createLucideIcon("save", __iconNode$7);
+const __iconNode$6 = [
+  ["path", { d: "m21 21-4.34-4.34", key: "14j7rj" }],
+  ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }]
+];
+const Search = createLucideIcon("search", __iconNode$6);
+const __iconNode$5 = [
+  [
+    "path",
+    {
+      d: "M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z",
+      key: "1ffxy3"
+    }
+  ],
+  ["path", { d: "m21.854 2.147-10.94 10.939", key: "12cjpa" }]
+];
+const Send = createLucideIcon("send", __iconNode$5);
+const __iconNode$4 = [
+  ["circle", { cx: "12", cy: "12", r: "4", key: "4exip2" }],
+  ["path", { d: "M12 2v2", key: "tus03m" }],
+  ["path", { d: "M12 20v2", key: "1lh1kg" }],
+  ["path", { d: "m4.93 4.93 1.41 1.41", key: "149t6j" }],
+  ["path", { d: "m17.66 17.66 1.41 1.41", key: "ptbguv" }],
+  ["path", { d: "M2 12h2", key: "1t8f8n" }],
+  ["path", { d: "M20 12h2", key: "1q8mjw" }],
+  ["path", { d: "m6.34 17.66-1.41 1.41", key: "1m8zz5" }],
+  ["path", { d: "m19.07 4.93-1.41 1.41", key: "1shlcs" }]
+];
+const Sun = createLucideIcon("sun", __iconNode$4);
+const __iconNode$3 = [
+  ["path", { d: "M10 11v6", key: "nco0om" }],
+  ["path", { d: "M14 11v6", key: "outv1u" }],
+  ["path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6", key: "miytrc" }],
+  ["path", { d: "M3 6h18", key: "d0wm0j" }],
+  ["path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2", key: "e791ji" }]
+];
+const Trash2 = createLucideIcon("trash-2", __iconNode$3);
+const __iconNode$2 = [
+  ["path", { d: "M9 14 4 9l5-5", key: "102s5s" }],
+  ["path", { d: "M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11", key: "f3b9sd" }]
+];
+const Undo2 = createLucideIcon("undo-2", __iconNode$2);
+const __iconNode$1 = [
+  ["path", { d: "m16 11 2 2 4-4", key: "9rsbq5" }],
+  ["path", { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", key: "1yyitq" }],
+  ["circle", { cx: "9", cy: "7", r: "4", key: "nufk8" }]
+];
+const UserCheck = createLucideIcon("user-check", __iconNode$1);
+const __iconNode = [
+  ["path", { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", key: "1yyitq" }],
+  ["circle", { cx: "9", cy: "7", r: "4", key: "nufk8" }],
+  ["line", { x1: "19", x2: "19", y1: "8", y2: "14", key: "1bvyxn" }],
+  ["line", { x1: "22", x2: "16", y1: "11", y2: "11", key: "1shjgl" }]
+];
+const UserPlus = createLucideIcon("user-plus", __iconNode);
 function ThemeToggle() {
   const [theme, setTheme] = useState("light");
   useEffect(() => {
@@ -151,6 +398,16 @@ const dataDir = path.join(rootDir, "data");
 const dbPath = path.join(dataDir, "outreach.sqlite");
 const migrationsDir = path.join(rootDir, "db", "migrations");
 let database;
+function findProspectByProfileUrl(profileUrl) {
+  const row = getDb().prepare("SELECT id FROM prospects WHERE profile_url = ?").get(normalizeLinkedInUrl$1(profileUrl));
+  return row?.id || null;
+}
+function setProspectOutreachPreference(id, mode) {
+  const db = getDb();
+  const today = todayIso();
+  db.prepare("UPDATE prospects SET outreach_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(mode, id);
+  addEvent(id, mode === "no_note" ? "no_note_mode_selected" : "with_note_mode_selected", `Extension selected ${mode === "no_note" ? "no-note" : "with-note"} outreach mode.`, today);
+}
 function getProspectDetail(id) {
   const db = getDb();
   const prospect = db.prepare(`
@@ -161,12 +418,14 @@ function getProspectDetail(id) {
       b.shared_url,
       cm.content AS connection_message,
       rm.content AS report_message,
+      nrm.content AS no_note_report_message,
       fm.content AS followup_message,
       fm.due_date AS followup_due_date
     FROM prospects p
     LEFT JOIN briefs b ON b.prospect_id = p.id
     LEFT JOIN messages cm ON cm.prospect_id = p.id AND cm.type = 'connection'
     LEFT JOIN messages rm ON rm.prospect_id = p.id AND rm.type = 'report'
+    LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
     LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
     WHERE p.id = ?
   `).get(id);
@@ -188,12 +447,18 @@ function getProspectDetail(id) {
     WHERE e.prospect_id = ?
     ORDER BY e.happened_at DESC, e.id DESC
   `).all(id);
-  return { prospect, tasks, events, today: todayIso() };
+  const replies = db.prepare(`
+    SELECT *
+    FROM replies
+    WHERE prospect_id = ?
+    ORDER BY created_at DESC, id DESC
+  `).all(id);
+  return { prospect: withDerivedMessages(prospect), tasks, events, replies, today: todayIso() };
 }
 function getDashboard() {
   const db = getDb();
   const today = todayIso();
-  const prospects = db.prepare(`
+  const prospectRows = db.prepare(`
     SELECT
       p.*,
       b.topic AS brief_topic,
@@ -201,12 +466,14 @@ function getDashboard() {
       b.shared_url,
       cm.content AS connection_message,
       rm.content AS report_message,
+      nrm.content AS no_note_report_message,
       fm.content AS followup_message,
       fm.due_date AS followup_due_date
     FROM prospects p
     LEFT JOIN briefs b ON b.prospect_id = p.id
     LEFT JOIN messages cm ON cm.prospect_id = p.id AND cm.type = 'connection'
     LEFT JOIN messages rm ON rm.prospect_id = p.id AND rm.type = 'report'
+    LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
     LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
     ORDER BY
       CASE p.status
@@ -214,7 +481,10 @@ function getDashboard() {
         WHEN 'connection_sent' THEN 2
         WHEN 'to_contact' THEN 3
         WHEN 'report_sent' THEN 4
+        WHEN 'conversation_active' THEN 4
+        WHEN 'reply_sent' THEN 4
         WHEN 'followup_due' THEN 5
+        WHEN 'archived' THEN 8
         WHEN 'saved_for_later' THEN 6
         WHEN 'skipped' THEN 7
         ELSE 8
@@ -222,6 +492,7 @@ function getDashboard() {
       p.wave,
       p.name
   `).all();
+  const prospects = prospectRows.map(withDerivedMessages);
   const tasks = db.prepare(`
     SELECT t.*, p.name, p.profile_url
     FROM tasks t
@@ -252,12 +523,16 @@ function getDashboard() {
       followupsDue: tasks.filter(
         (item) => item.status === "open" && item.type === "send_followup" && item.due_date && item.due_date <= today
       ),
+      followupsScheduled: tasks.filter(
+        (item) => item.status === "open" && item.type === "send_followup" && item.due_date && item.due_date > today
+      ),
+      conversationsActive: prospects.filter((item) => item.status === "conversation_active"),
       pendingConnections: prospects.filter((item) => item.status === "connection_sent"),
       doneToday: events.filter((item) => String(item.happened_at).slice(0, 10) === today)
     }
   };
 }
-function runProspectAction(formData) {
+async function runProspectAction(formData) {
   const id = Number(formData.get("prospectId"));
   const intent = String(formData.get("intent") || "");
   const db = getDb();
@@ -266,28 +541,117 @@ function runProspectAction(formData) {
     throw new Error("Unknown prospect");
   }
   const today = todayIso();
+  if (intent === "generateNoNoteMode") {
+    const rewrite = await generateNoNoteRewrite(id);
+    db.exec("BEGIN");
+    try {
+      db.prepare("UPDATE prospects SET outreach_mode = 'no_note', connection_note_sent = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      upsertGeneratedMessage(id, "report_no_note", rewrite.noNoteReportMessage, null);
+      upsertGeneratedMessage(id, "followup", rewrite.followupMessage, null);
+      addEvent(id, "no_note_mode_generated", "No-note outreach mode generated with AI.", today);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    return;
+  }
   db.exec("BEGIN");
   try {
-    if (intent === "markAccepted") {
+    if (intent === "deleteProspect") {
+      completeAllOpenTasks(id);
+      db.prepare("DELETE FROM prospects WHERE id = ?").run(id);
+    } else if (intent === "addProspectReply") {
+      const inboundContent = String(formData.get("inboundContent") || "").trim();
+      const suggestedResponse = String(formData.get("suggestedResponse") || "").trim() || replyFallback(prospect.name, inboundContent);
+      if (!inboundContent) throw new Error("Reply content is required");
+      db.prepare("INSERT INTO replies (prospect_id, inbound_content, suggested_response) VALUES (?, ?, ?)").run(id, inboundContent, suggestedResponse);
+      db.prepare("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      completeOpenTask(id, "send_followup");
+      addEvent(id, "reply_received", "Prospect replied. Follow-up task closed.", today);
+    } else if (intent === "updateReplyResponse") {
+      const replyId = Number(formData.get("replyId"));
+      const suggestedResponse = String(formData.get("suggestedResponse") || "").trim();
+      if (!replyId) throw new Error("Reply id is required");
+      if (!suggestedResponse) throw new Error("Suggested response is required");
+      db.prepare("UPDATE replies SET suggested_response = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?").run(suggestedResponse, replyId, id);
+      addEvent(id, "reply_response_updated", "Suggested response edited.", today);
+    } else if (intent === "markReplySent") {
+      const replyId = Number(formData.get("replyId"));
+      if (!replyId) throw new Error("Reply id is required");
+      db.prepare("UPDATE replies SET sent_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?").run(today, replyId, id);
+      completeOpenTask(id, "send_followup");
+      db.prepare("UPDATE prospects SET status = 'reply_sent', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      addEvent(id, "reply_sent", "Reply sent to prospect.", today);
+    } else if (intent === "archiveProspect") {
+      db.prepare("UPDATE prospects SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      completeAllOpenTasks(id);
+      addEvent(id, "archived", "Prospect manually archived.", today);
+    } else if (intent === "reopenConversation") {
+      db.prepare("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      addEvent(id, "conversation_reopened", "Conversation reopened.", today);
+    } else if (intent === "updateMessage") {
+      const type = String(formData.get("messageType") || "").trim();
+      const content = String(formData.get("messageContent") || "").trim();
+      if (!["connection", "report", "report_no_note", "followup"].includes(type)) throw new Error("Unknown message type");
+      if (!content) throw new Error("Message content is required");
+      upsertGeneratedMessage(id, type, content, type === "followup" ? null : null);
+      addEvent(id, "message_updated", `${type} message edited.`, today);
+    } else if (intent === "markAccepted") {
       db.prepare("UPDATE prospects SET status = 'accepted', accepted_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
       completeOpenTask(id, "watch_acceptance");
-      createOpenTask(id, "send_report", `Send report to ${prospect.name}`, today);
+      createOpenTask(id, "send_report", `Send first message to ${prospect.name}`, today);
       addEvent(id, "accepted", "LinkedIn connection accepted.", today);
     } else if (intent === "archiveDeclined") {
       db.prepare("UPDATE prospects SET status = 'archived_declined', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
       completeAllOpenTasks(id);
       addEvent(id, "archived_declined", "Connection request declined or ignored. Archived to avoid recontacting.", today);
-    } else if (intent === "markConnectionSent") {
-      db.prepare("UPDATE prospects SET status = 'connection_sent', connection_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
+    } else if (intent === "markConnectionSent" || intent === "markConnectionSentWithNote") {
+      db.prepare(`
+        UPDATE prospects
+        SET status = 'connection_sent',
+            outreach_mode = 'with_note',
+            connection_note_sent = 1,
+            connection_sent_date = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(today, id);
       db.prepare("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'connection'").run(today, id);
       completeOpenTask(id, "send_connection");
       createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
-      addEvent(id, "connection_sent", "Connection request sent.", today);
+      addEvent(id, "connection_sent", "Connection request sent with custom note.", today);
+    } else if (intent === "markConnectionSentWithoutNote") {
+      db.prepare(`
+        UPDATE prospects
+        SET status = 'connection_sent',
+            outreach_mode = 'no_note',
+            connection_note_sent = 0,
+            connection_sent_date = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(today, id);
+      completeOpenTask(id, "send_connection");
+      createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
+      addEvent(id, "connection_sent_without_note", "Connection request sent without custom note. First outreach message waits for acceptance.", today);
     } else if (intent === "addBriefUrl") {
       const sharedUrl = String(formData.get("sharedUrl") || "").trim();
       if (!sharedUrl) throw new Error("Brief URL is required");
       db.prepare("UPDATE briefs SET shared_url = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ?").run(sharedUrl, id);
       addEvent(id, "brief_url_added", `Brief URL added: ${sharedUrl}`, today);
+    } else if (intent === "updateBriefStrategy") {
+      const topic = trimWords(String(formData.get("briefTopic") || ""), 3);
+      const preparationNotes = String(formData.get("briefPreparation") || "").trim();
+      if (!topic) throw new Error("Brief topic is required");
+      db.prepare(`
+        INSERT INTO briefs (prospect_id, topic, preparation_notes)
+        VALUES (?, ?, ?)
+        ON CONFLICT(prospect_id) DO UPDATE SET
+          topic = excluded.topic,
+          preparation_notes = excluded.preparation_notes,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(id, topic, preparationNotes);
+      upsertGeneratedMessage(id, "report_no_note", noNoteReportFallback(prospect.name, topic, prospect.position, prospect.about, prospect.recommended_template), null);
+      addEvent(id, "brief_strategy_updated", `Brief topic updated to ${topic}.`, today);
     } else if (intent === "markReportSent") {
       const followupDate = addDaysIso(today, 5);
       db.prepare("UPDATE prospects SET status = 'report_sent', report_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
@@ -309,6 +673,9 @@ function runProspectAction(formData) {
       db.prepare("UPDATE prospects SET status = 'saved_for_later', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
       completeAllOpenTasks(id);
       addEvent(id, "saved_for_later", "Prospect saved for a later wave.", today);
+    } else if (intent === "switchToWithNoteMode") {
+      db.prepare("UPDATE prospects SET outreach_mode = 'with_note', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      addEvent(id, "with_note_mode_selected", "With-note outreach mode selected.", today);
     } else {
       throw new Error(`Unknown action ${intent}`);
     }
@@ -317,6 +684,23 @@ function runProspectAction(formData) {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+function replyFallback(name, inboundContent) {
+  const first = firstName(name);
+  const lower = inboundContent.toLowerCase();
+  if (/\b(thanks|thank you|interesting|useful|helpful)\b/.test(lower)) {
+    return `Thanks ${first}, really appreciate you taking a look.
+
+If useful, I can keep refining this around the kinds of narrative signals that matter most for your work.`;
+  }
+  if (/\b(not relevant|not useful|unclear|don't|do not)\b/.test(lower)) {
+    return `Thanks ${first}, that's helpful to know.
+
+Was the issue the topic choice, the format, or the type of signal surfaced? That would help me calibrate the next version.`;
+  }
+  return `Thanks ${first}, really appreciate the reply.
+
+What would make this more useful for the kind of policy or communications work you do?`;
 }
 function importAnalyzedProspects(items) {
   const db = getDb();
@@ -389,6 +773,9 @@ function importAnalyzedProspects(items) {
       if (item.reportMessage) {
         upsertMessage.run(prospect.id, "report", item.reportMessage, null);
       }
+      if (item.noNoteReportMessage) {
+        upsertMessage.run(prospect.id, "report_no_note", item.noNoteReportMessage, null);
+      }
       if (item.followupMessage) {
         upsertMessage.run(prospect.id, "followup", item.followupMessage, null);
       }
@@ -402,6 +789,9 @@ function importAnalyzedProspects(items) {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+function normalizeLinkedInUrl$1(value) {
+  return value.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
 }
 function getDb() {
   if (!database) {
@@ -456,6 +846,16 @@ function completeAllOpenTasks(prospectId) {
     WHERE prospect_id = ? AND status = 'open'
   `).run(todayIso(), prospectId);
 }
+function upsertGeneratedMessage(prospectId, type, content, dueDate) {
+  getDb().prepare(`
+    INSERT INTO messages (prospect_id, type, content, due_date, sent_date)
+    VALUES (?, ?, ?, ?, NULL)
+    ON CONFLICT(prospect_id, type) DO UPDATE SET
+      content = excluded.content,
+      due_date = excluded.due_date,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(prospectId, type, content, dueDate);
+}
 function addEvent(prospectId, type, note, happenedAt) {
   getDb().prepare("INSERT INTO events (prospect_id, type, note, happened_at) VALUES (?, ?, ?, ?)").run(prospectId, type, note, happenedAt);
 }
@@ -473,6 +873,198 @@ function addDaysIso(dateIso, days) {
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
 }
+function withDerivedMessages(prospect) {
+  const noNoteFallback = noNoteReportFallback(
+    prospect.name,
+    prospect.brief_topic,
+    prospect.position,
+    prospect.about,
+    prospect.recommended_template
+  );
+  return {
+    ...prospect,
+    outreach_mode: prospect.outreach_mode || "with_note",
+    connection_note_sent: prospect.connection_note_sent || 0,
+    post_acceptance_message: prospect.outreach_mode === "no_note" ? prospect.no_note_report_message ? sanitizeNoNoteMessage(prospect.no_note_report_message, noNoteFallback) : rewriteReportForNoNote(prospect.report_message, prospect.name, prospect.brief_topic, prospect.position, prospect.about, prospect.recommended_template) : prospect.report_message
+  };
+}
+function rewriteReportForNoNote(content, name, topic, position, about, template) {
+  const fallback = noNoteReportFallback(name, topic, position, about, template);
+  if (!content) return fallback;
+  const rewritten = content.replace(/As promised,\s*the brief on/i, "Thanks for connecting. I prepared a brief on").replace(/As promised,\s*the brief/i, "Thanks for connecting. I prepared a brief").replace(/The brief I mentioned,\s*on/i, "Thanks for connecting. I prepared a brief on").replace(/The brief I promised,\s*on/i, "Thanks for connecting. I prepared a brief on").replace(/As promised,\s*/i, "").replace(/The brief I mentioned,\s*/i, "I prepared a brief ").replace(/The brief I mentioned/i, "I prepared a brief").replace(/The brief I promised,\s*/i, "I prepared a brief ").replace(/The brief I promised/i, "I prepared a brief").replace(/Le brief promis\s*/i, "J'ai préparé un brief ").replace(/Comme promis,\s*/i, "");
+  return rewritten === content ? fallback : rewritten;
+}
+function noNoteReportFallback(name, topic, position, about, template) {
+  const firstName2 = name.split(/\s+/)[0] || name;
+  const briefTopic = topic || "your policy area";
+  const context = prospectContext$1(position, about, template);
+  return `Hi ${firstName2},
+
+Thanks for connecting. I'm building Tempolis, a tool for public affairs narrative briefs, and I prepared a short brief on ${briefTopic} because it seems close to your work on ${context}.
+
+[shared link]
+
+If the angle feels useful, or if the signal is off for your workflow, your feedback would be very helpful.`;
+}
+function prospectContext$1(position, about, template) {
+  const text = `${position || ""} ${about || ""} ${template || ""}`.toLowerCase();
+  if (/\b(ai|artificial intelligence|digital|tech|technology|platform|data|privacy|gdpr)\b/.test(text)) return "tech policy and regulation";
+  if (/\b(energy|climate|sustainability|power|grid)\b/.test(text)) return "energy and policy strategy";
+  if (/\b(health|pharma|medical|biotech)\b/.test(text)) return "health policy and public affairs";
+  if (/\b(finance|bank|fintech|payments|competition)\b/.test(text)) return "regulated markets and public affairs";
+  if (/\b(communications|comms|media|narrative|reputation)\b/.test(text)) return "strategic communications";
+  if (/\b(government affairs|public affairs|policy|regulatory|eu affairs|brussels)\b/.test(text)) return "public affairs and policy";
+  return "policy and public affairs";
+}
+async function generateNoNoteRewrite(prospectId) {
+  loadLocalEnv$1();
+  const detail = getProspectDetail(prospectId);
+  if (!detail) throw new Error("Prospect not found");
+  const { prospect } = detail;
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing OPENROUTER_API_KEY. Add it to .env or your shell env.");
+  }
+  const model = process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
+  const prompt = buildNoNoteRewritePrompt(prospect);
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:4377",
+      "X-Title": "Tempolis Outreach App"
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a strict JSON-producing public affairs outreach copywriter. Return only valid JSON. Never include markdown."
+        },
+        { role: "user", content: prompt }
+      ]
+    })
+  });
+  if (!response.ok) {
+    const detailText = await response.text();
+    throw new Error(`OpenRouter request failed (${response.status}): ${detailText.slice(0, 600)}`);
+  }
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenRouter returned an empty response.");
+  return normalizeNoNoteRewrite(parseJson$1(content), prospect);
+}
+function buildNoNoteRewritePrompt(prospect) {
+  const outreach = readDoc("outreach.md");
+  const brand = readDoc("brand.md");
+  return `
+Rewrite this Tempolis LinkedIn outreach sequence for NO-CUSTOM-NOTE mode.
+
+CONTEXT
+LinkedIn custom note quota is exhausted. The connection request will be sent without any note. The first actual outreach message is sent only after the person accepts the request.
+
+TASK
+- Keep the strategy soft: no product pitch, no demo request, no call request.
+- Write in English.
+- Adapt the first post-acceptance message so it does not rely on a previous promise.
+- The first message must naturally acknowledge the new connection and introduce the brief.
+- Make the first message feel written for this exact person, not a reusable template.
+- Use the prospect's role, organization context, about section, rationale, recommendedTemplate and briefTopic to choose one concrete angle.
+- Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format. Do not make this a product pitch.
+- Explain why this brief is relevant to their world in one specific phrase.
+- Ask for feedback on the angle, signal quality, or format. Do not ask for "thoughts" generically.
+- It must include [shared link] on its own line.
+- It must be 5 lines max.
+- It must not say "as promised", "the brief I mentioned", "as I mentioned", or imply that a note was sent.
+- Avoid generic filler: "key topics", "professionals like yourself", "might be of interest", "any initial thoughts", "greatly appreciated".
+- Rewrite the follow-up for 5 days later. It should still be gentle and should not refer to a promised brief.
+
+OUTPUT JSON SHAPE
+{
+  "noNoteReportMessage": string,
+  "followupMessage": string
+}
+
+PROSPECT
+${JSON.stringify({
+    name: prospect.name,
+    position: prospect.position,
+    about: prospect.about,
+    profileUrl: prospect.profile_url,
+    priorityTag: prospect.priority_tag,
+    wave: prospect.wave,
+    rationale: prospect.rationale,
+    recommendedTemplate: prospect.recommended_template,
+    briefTopic: prospect.brief_topic,
+    briefPreparation: prospect.preparation_notes,
+    sharedUrl: prospect.shared_url || "[shared link]"
+  }, null, 2)}
+
+CURRENT COPY GENERATED FOR WITH-NOTE MODE
+${JSON.stringify({
+    connectionNote: prospect.connection_message,
+    afterAcceptanceWithNote: prospect.report_message,
+    existingNoNoteMessage: prospect.no_note_report_message,
+    followup: prospect.followup_message
+  }, null, 2)}
+
+PLAYBOOK
+${outreach.slice(0, 18e3)}
+
+BRAND
+${brand.slice(0, 12e3)}
+`;
+}
+function normalizeNoNoteRewrite(value, prospect) {
+  const input = value;
+  const fallbackReport = noNoteReportFallback(prospect.name, prospect.brief_topic, prospect.position, prospect.about, prospect.recommended_template);
+  const fallbackFollowup = `Hi ${firstName(prospect.name)}, following up in case the brief slipped through. No worries if this isn't the right timing.`;
+  return {
+    noNoteReportMessage: sanitizeNoNoteMessage(String(input.noNoteReportMessage || ""), fallbackReport),
+    followupMessage: sanitizeNoNoteMessage(String(input.followupMessage || ""), fallbackFollowup)
+  };
+}
+function sanitizeNoNoteMessage(value, fallback) {
+  const cleanValue = value.trim();
+  if (!cleanValue) return fallback;
+  if (/\b(as promised|brief i mentioned|brief i promised|as i mentioned|comme promis|brief promis)\b/i.test(cleanValue)) {
+    return fallback;
+  }
+  if (/\b(key topics|professionals like yourself|might be of interest|any initial thoughts|greatly appreciated)\b/i.test(cleanValue)) {
+    return fallback;
+  }
+  return cleanValue;
+}
+function firstName(name) {
+  return name.split(/\s+/)[0] || name;
+}
+function parseJson$1(content) {
+  const trimmed = content.trim();
+  const json = trimmed.startsWith("```") ? trimmed.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim() : trimmed;
+  return JSON.parse(json);
+}
+function loadLocalEnv$1() {
+  const envPath = path.join(rootDir, ".env");
+  if (!fs.existsSync(envPath)) return;
+  const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const separator = trimmed.indexOf("=");
+    if (separator === -1) continue;
+    const key = trimmed.slice(0, separator).trim();
+    const rawValue = trimmed.slice(separator + 1).trim();
+    if (!key || process.env[key] !== void 0) continue;
+    process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+  }
+}
+function readDoc(fileName) {
+  const docsDir2 = path.resolve(rootDir, "..", "tempolis", "front", "docs");
+  return fs.readFileSync(path.join(docsDir2, fileName), "utf8");
+}
 function statusForImportedProspect(item) {
   if (item.priorityTag === "SKIP") return "skipped";
   if (item.priorityTag === "SAVE") return "saved_for_later";
@@ -481,8 +1073,11 @@ function statusForImportedProspect(item) {
 function normalizeAnalyzedProspect(item) {
   const tag = ["LEARN", "WARM", "SAVE", "SKIP"].includes(item.priorityTag) ? item.priorityTag : "SKIP";
   const topic = trimWords(String(item.briefTopic || ""), 3);
+  const name = String(item.name || "").trim();
+  const reportMessage = String(item.reportMessage || "").trim();
+  const noNoteFallback = rewriteReportForNoNote(reportMessage, name, topic, item.position, item.about, item.recommendedTemplate);
   return {
-    name: String(item.name || "").trim(),
+    name,
     position: String(item.position || "").trim(),
     profileUrl: String(item.profileUrl || "").trim(),
     about: String(item.about || "").trim(),
@@ -494,7 +1089,8 @@ function normalizeAnalyzedProspect(item) {
     briefPreparation: String(item.briefPreparation || "").trim(),
     recommendedTemplate: String(item.recommendedTemplate || "").trim(),
     connectionMessage: String(item.connectionMessage || "").trim().slice(0, 300),
-    reportMessage: String(item.reportMessage || "").trim(),
+    reportMessage,
+    noNoteReportMessage: sanitizeNoNoteMessage(String(item.noNoteReportMessage || ""), noNoteFallback),
     followupMessage: String(item.followupMessage || "").trim()
   };
 }
@@ -510,16 +1106,16 @@ const meta$4 = () => [{
 function loader$2() {
   return getDashboard();
 }
-async function action$2({
+async function action$3({
   request
 }) {
   const formData = await request.formData();
-  runProspectAction(formData);
+  await runProspectAction(formData);
   return redirect("/");
 }
 const home = UNSAFE_withComponentProps(function Home() {
-  const data = useLoaderData();
-  const activeProspects = data.prospects.filter((prospect) => !["saved_for_later", "skipped", "archived_declined"].includes(prospect.status));
+  const data2 = useLoaderData();
+  const activeProspects = data2.prospects.filter((prospect) => !["saved_for_later", "skipped", "archived_declined", "archived"].includes(prospect.status));
   return /* @__PURE__ */ jsx("main", {
     className: "min-h-screen bg-stone-100 px-4 py-8 text-stone-950 sm:px-6 lg:px-8",
     children: /* @__PURE__ */ jsxs("div", {
@@ -539,19 +1135,19 @@ const home = UNSAFE_withComponentProps(function Home() {
           })]
         }), /* @__PURE__ */ jsxs("div", {
           className: "flex flex-col gap-3 sm:flex-row sm:items-center",
-          children: [/* @__PURE__ */ jsxs(Link, {
+          children: [/* @__PURE__ */ jsxs(Link$1, {
             to: "/search",
             className: "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-4 font-medium text-stone-900 hover:border-teal-700",
             children: [/* @__PURE__ */ jsx(Search, {
               size: 18
             }), "Search CRM"]
-          }), /* @__PURE__ */ jsxs(Link, {
+          }), /* @__PURE__ */ jsxs(Link$1, {
             to: "/discover",
             className: "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-4 font-medium text-stone-900 hover:border-teal-700",
             children: [/* @__PURE__ */ jsx(UserPlus, {
               size: 18
             }), "Discover"]
-          }), /* @__PURE__ */ jsxs(Link, {
+          }), /* @__PURE__ */ jsxs(Link$1, {
             to: "/batch",
             className: "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-4 font-medium text-white hover:bg-teal-800",
             children: [/* @__PURE__ */ jsx(Plus, {
@@ -564,7 +1160,7 @@ const home = UNSAFE_withComponentProps(function Home() {
               children: "Today"
             }), /* @__PURE__ */ jsx("p", {
               className: "text-lg font-semibold",
-              children: data.today
+              children: data2.today
             })]
           })]
         })]
@@ -572,16 +1168,16 @@ const home = UNSAFE_withComponentProps(function Home() {
         className: "mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4",
         children: [/* @__PURE__ */ jsx(Metric$1, {
           label: "Prospects",
-          value: data.prospects.length
+          value: data2.prospects.length
         }), /* @__PURE__ */ jsx(Metric$1, {
           label: "Pending connections",
-          value: data.sections.pendingConnections.length
+          value: data2.sections.pendingConnections.length
         }), /* @__PURE__ */ jsx(Metric$1, {
           label: "Reports to send",
-          value: data.sections.acceptedReport.length
+          value: data2.sections.acceptedReport.length
         }), /* @__PURE__ */ jsx(Metric$1, {
-          label: "Follow-ups due",
-          value: data.sections.followupsDue.length
+          label: "Active conversations",
+          value: data2.sections.conversationsActive.length
         })]
       }), /* @__PURE__ */ jsxs("div", {
         className: "mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]",
@@ -595,44 +1191,61 @@ const home = UNSAFE_withComponentProps(function Home() {
               className: "mt-3 grid gap-3",
               children: [/* @__PURE__ */ jsx(TodayPanel, {
                 title: "Connect today",
-                items: data.sections.toConnect,
+                items: data2.sections.toConnect,
                 children: (task) => {
-                  const prospect = data.prospects.find((item) => item.id === task.prospect_id);
+                  const prospect = data2.prospects.find((item) => item.id === task.prospect_id);
                   return prospect ? /* @__PURE__ */ jsx(DashboardTaskLink, {
                     prospect,
-                    detail: "Send LinkedIn connection request"
+                    detail: "Send LinkedIn request with note, or without note if capped"
                   }) : null;
                 }
               }), /* @__PURE__ */ jsx(TodayPanel, {
                 title: "Accepted, report to send",
-                items: data.sections.acceptedReport,
+                items: data2.sections.acceptedReport,
                 children: (prospect) => /* @__PURE__ */ jsx(DashboardTaskLink, {
                   prospect,
                   detail: "Connection accepted, report to send"
                 })
               }), /* @__PURE__ */ jsx(TodayPanel, {
                 title: "Brief URLs missing",
-                items: data.sections.missingBriefUrls,
+                items: data2.sections.missingBriefUrls,
                 children: (prospect) => /* @__PURE__ */ jsx(DashboardTaskLink, {
                   prospect,
                   detail: `Prepare brief URL for ${prospect.brief_topic || "brief"}`
                 })
               }), /* @__PURE__ */ jsx(TodayPanel, {
                 title: "Follow-ups due",
-                items: data.sections.followupsDue,
+                items: data2.sections.followupsDue,
                 children: (task) => {
-                  const prospect = data.prospects.find((item) => item.id === task.prospect_id);
+                  const prospect = data2.prospects.find((item) => item.id === task.prospect_id);
                   return prospect ? /* @__PURE__ */ jsx(DashboardTaskLink, {
                     prospect,
                     detail: `Follow-up due ${task.due_date || ""}`
                   }) : null;
                 }
               }), /* @__PURE__ */ jsx(TodayPanel, {
-                title: "Pending connections",
-                items: data.sections.pendingConnections,
+                title: "Follow-ups scheduled",
+                items: data2.sections.followupsScheduled,
+                children: (task) => {
+                  const prospect = data2.prospects.find((item) => item.id === task.prospect_id);
+                  return prospect ? /* @__PURE__ */ jsx(DashboardTaskLink, {
+                    prospect,
+                    detail: `Follow-up scheduled ${task.due_date || ""}`
+                  }) : null;
+                }
+              }), /* @__PURE__ */ jsx(TodayPanel, {
+                title: "Active conversations",
+                items: data2.sections.conversationsActive,
                 children: (prospect) => /* @__PURE__ */ jsx(DashboardTaskLink, {
                   prospect,
-                  detail: `Sent ${prospect.connection_sent_date || "today"} · watch acceptance`
+                  detail: "Prospect replied, conversation in progress"
+                })
+              }), /* @__PURE__ */ jsx(TodayPanel, {
+                title: "Pending connections",
+                items: data2.sections.pendingConnections,
+                children: (prospect) => /* @__PURE__ */ jsx(DashboardTaskLink, {
+                  prospect,
+                  detail: `${outreachModeLabel$1(prospect)} · sent ${prospect.connection_sent_date || "today"} · watch acceptance`
                 })
               })]
             })]
@@ -651,7 +1264,7 @@ const home = UNSAFE_withComponentProps(function Home() {
             detail: "Latest events."
           }), /* @__PURE__ */ jsx("div", {
             className: "mt-4 space-y-4",
-            children: data.events.length === 0 ? /* @__PURE__ */ jsx(EmptyState$1, {}) : data.events.map((event) => /* @__PURE__ */ jsxs("div", {
+            children: data2.events.length === 0 ? /* @__PURE__ */ jsx(EmptyState$1, {}) : data2.events.map((event) => /* @__PURE__ */ jsxs("div", {
               className: "border-l-2 border-teal-700 pl-3",
               children: [/* @__PURE__ */ jsx("p", {
                 className: "font-medium",
@@ -674,7 +1287,7 @@ function DashboardTaskLink({
   prospect,
   detail
 }) {
-  return /* @__PURE__ */ jsxs(Link, {
+  return /* @__PURE__ */ jsxs(Link$1, {
     to: `/prospects/${prospect.id}`,
     className: "grid gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3 hover:border-teal-700 md:grid-cols-[1fr_auto] md:items-center",
     children: [/* @__PURE__ */ jsx(TaskIntro, {
@@ -687,6 +1300,9 @@ function DashboardTaskLink({
       className: "flex flex-wrap gap-2",
       children: [/* @__PURE__ */ jsx(Badge$3, {
         children: prospect.priority_tag
+      }), /* @__PURE__ */ jsx(Badge$3, {
+        tone: prospect.outreach_mode === "no_note" ? "blue" : "green",
+        children: outreachModeLabel$1(prospect)
       }), /* @__PURE__ */ jsx(Badge$3, {
         tone: "blue",
         children: prospect.status
@@ -726,7 +1342,7 @@ function ProspectsTable({
           className: "hover:bg-stone-50",
           children: [/* @__PURE__ */ jsxs("td", {
             className: "border-b border-stone-200 px-4 py-3",
-            children: [/* @__PURE__ */ jsx(Link, {
+            children: [/* @__PURE__ */ jsx(Link$1, {
               to: `/prospects/${prospect.id}`,
               className: "font-semibold text-stone-950 hover:text-teal-800",
               children: prospect.name
@@ -756,12 +1372,14 @@ function ProspectsTable({
   });
 }
 function nextActionLabel(prospect) {
-  if (prospect.status === "to_contact" && prospect.contact_now) return "Send connection request";
-  if (prospect.status === "connection_sent") return "Watch acceptance or archive";
-  if (prospect.status === "accepted") return "Send report";
+  if (prospect.status === "to_contact" && prospect.contact_now) return "Send request with note or without note";
+  if (prospect.status === "connection_sent") return `${outreachModeLabel$1(prospect)} · watch acceptance`;
+  if (prospect.status === "accepted") return "Send first message";
   if (prospect.status === "report_sent") return "Wait for follow-up";
+  if (prospect.status === "conversation_active") return "Conversation in progress";
+  if (prospect.status === "reply_sent") return "Response sent";
   if (prospect.status === "followup_due") return "Send follow-up";
-  if (prospect.status === "archived_declined") return "Archived";
+  if (prospect.status === "archived_declined" || prospect.status === "archived") return "Archived";
   return "Review";
 }
 function Metric$1({
@@ -799,11 +1417,19 @@ function TodayPanel({
   items,
   children
 }) {
-  return /* @__PURE__ */ jsxs("div", {
+  const defaultOpen = items.length > 0;
+  return /* @__PURE__ */ jsxs("details", {
     className: "rounded-lg border border-stone-300 bg-white p-4",
-    children: [/* @__PURE__ */ jsx("h3", {
-      className: "font-semibold",
-      children: title
+    open: defaultOpen,
+    children: [/* @__PURE__ */ jsxs("summary", {
+      className: "flex cursor-pointer list-none items-center justify-between gap-3",
+      children: [/* @__PURE__ */ jsx("h3", {
+        className: "font-semibold",
+        children: title
+      }), /* @__PURE__ */ jsx(Badge$3, {
+        tone: items.length ? "blue" : "green",
+        children: items.length
+      })]
     }), /* @__PURE__ */ jsx("div", {
       className: "mt-3 grid gap-2",
       children: items.length ? items.map((item, index) => /* @__PURE__ */ jsx("div", {
@@ -843,6 +1469,10 @@ function Badge$3({
     children
   });
 }
+function outreachModeLabel$1(prospect) {
+  if (prospect.status === "to_contact") return "note optional";
+  return prospect.outreach_mode === "no_note" ? "no note" : "with note";
+}
 function EmptyState$1() {
   return /* @__PURE__ */ jsx("div", {
     className: "rounded-lg border border-dashed border-stone-300 p-4 text-sm text-stone-500",
@@ -851,7 +1481,7 @@ function EmptyState$1() {
 }
 const route1 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  action: action$2,
+  action: action$3,
   default: home,
   loader: loader$2,
   meta: meta$4
@@ -905,6 +1535,28 @@ async function analyzeProspectTable(tableText) {
   }
   return normalizeAnalysis(parseJson(content), prospects.length);
 }
+function prospectEvidenceToTable(profile) {
+  const evidence = [
+    profile.signals,
+    profile.activity ? `Activity: ${profile.activity}` : "",
+    profile.experience ? `Experience: ${profile.experience}` : "",
+    profile.education ? `Education: ${profile.education}` : "",
+    profile.rawText ? `Visible page text: ${profile.rawText}` : ""
+  ].filter(Boolean).join("\n\n");
+  const header = ["Name", "Position", "Profile URL", "About", "Signals", "Brief direction"];
+  const row = [
+    profile.name || "",
+    profile.position || "",
+    profile.profileUrl || "",
+    profile.about || "",
+    evidence,
+    profile.briefDirection || ""
+  ].map(cleanCell$1).join("	");
+  return [header.join("	"), row].join("\n");
+}
+function cleanCell$1(value) {
+  return String(value || "").replace(/\t/g, " ").replace(/\r?\n/g, " ").trim();
+}
 function loadLocalEnv() {
   const envPath = path.join(repoRoot, "outreach-app", ".env");
   if (!fs.existsSync(envPath)) return;
@@ -929,11 +1581,24 @@ TASK
 - Assign a wave: 1 for immediate learning outreach, 2 for calibration, 3 for premium/saved prospects, null for SKIP.
 - Pick only the best first-wave LEARN profiles for contactToday=true.
 - Generate exact LinkedIn connection messages for contactToday=true profiles.
-- Write all outreach messages in English by default: connectionMessage, reportMessage, and followupMessage.
+- Write all outreach messages in English by default: connectionMessage, reportMessage, noNoteReportMessage, and followupMessage.
 - Do not use French greetings or French message templates unless the input explicitly requests French. For now, assume English.
 - Use brief topics of 1 to 3 words only.
+- A brief topic is not the prospect's broad profession. It must be a concrete Tempolis brief subject: a figure, movement, issue, policy, controversy, narrative risk, or public debate.
+- Never use vague discipline labels as briefTopic: "public policy", "policy", "communications", "public affairs", "EU affairs", "regulation", "strategy".
+- If the user provides briefDirection, treat it as the strongest hint. If they provide signals/recent posts, use them to choose the topic.
+- Good briefTopic examples: "AI Act", "Energy security", "Tech backlash", "EU competitiveness", "Strategic autonomy", "Narrative risk", "Trade tensions".
 - Respect the outreach rule: no product pitch, no demo/call request, short connection note under 300 characters.
-- Generate the first post-acceptance report message and the J+5 follow-up.
+- Generate two post-acceptance variants:
+  - reportMessage assumes a custom connection note was sent and may refer to the promised brief.
+  - noNoteReportMessage assumes no custom connection note was sent; it must open naturally with "Thanks for connecting" or equivalent and must not say "as promised" or "the brief I mentioned".
+- Make noNoteReportMessage genuinely adapted to the prospect:
+  - Use their role, company context, about field, signals, briefDirection, rationale, recommendedTemplate and briefTopic to pick one concrete angle.
+  - Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format.
+  - Explain why the brief is relevant to their world in one specific phrase.
+  - Ask for feedback on angle, signal quality, or format, not generic "thoughts".
+  - Avoid filler phrases: "key topics", "professionals like yourself", "might be of interest", "any initial thoughts", "greatly appreciated".
+- Generate the J+5 follow-up.
 - Do not invent facts beyond the profile fields.
 
 OUTPUT JSON SHAPE
@@ -960,6 +1625,7 @@ OUTPUT JSON SHAPE
       "recommendedTemplate": string,
       "connectionMessage": string,
       "reportMessage": string,
+      "noNoteReportMessage": string,
       "followupMessage": string
     }
   ]
@@ -987,7 +1653,9 @@ function parseProspectTable(input) {
       name: clean(row.name),
       position: clean(row.position),
       profileUrl: clean(row.profileurl || row.profile || row.linkedin || row.url),
-      about: clean(row.about)
+      about: clean(row.about),
+      signals: clean(row.signals || row.recentposts || row.posts || row.activity || row.evidence),
+      briefDirection: clean(row.briefdirection || row.briefseed || row.topicseed || row.suggestedtopic || row.preferredtopic)
     };
   }).filter((row) => row.name && row.profileUrl);
 }
@@ -1052,15 +1720,16 @@ function normalizeAnalysis(value, total) {
 function normalizeProspect(item) {
   const tag = ["LEARN", "WARM", "SAVE", "SKIP"].includes(String(item.priorityTag)) ? item.priorityTag : "SKIP";
   const wave = typeof item.wave === "number" ? item.wave : null;
-  const briefTopic = clean(item.briefTopic).split(/\s+/).slice(0, 3).join(" ");
-  const firstName = clean(item.name).split(/\s+/)[0] || clean(item.name);
+  const rawBriefTopic = clean(item.briefTopic).split(/\s+/).slice(0, 3).join(" ");
+  const briefTopic = isGenericBriefTopic(rawBriefTopic) ? fallbackBriefTopic(item) : rawBriefTopic;
+  const firstName2 = clean(item.name).split(/\s+/)[0] || clean(item.name);
   const connectionMessage = enforceEnglish(
     clean(item.connectionMessage),
-    `Hi ${firstName}, I'm building a tool aimed at EU public affairs professionals. I prepared a brief on ${briefTopic || "your policy area"} that might resonate. Would value your view.`
+    `Hi ${firstName2}, I'm building a tool aimed at EU public affairs professionals. I prepared a brief on ${briefTopic || "your policy area"} that might resonate. Would value your view.`
   );
   const reportMessage = enforceEnglish(
     clean(item.reportMessage),
-    `Hi ${firstName},
+    `Hi ${firstName2},
 
 As promised, the brief on ${briefTopic || "your policy area"}: what public discourse is saying over the last 24 hours, outside media coverage.
 
@@ -1068,9 +1737,11 @@ As promised, the brief on ${briefTopic || "your policy area"}: what public disco
 
 I'm testing it with public affairs profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`
   );
+  const noNoteFallback = noNoteFallbackCopy(firstName2, briefTopic, item.position, item.about, item.recommendedTemplate);
+  const noNoteReportMessage = noPriorNoteCopy(enforceEnglish(clean(item.noNoteReportMessage), noNoteFallback), noNoteFallback);
   const followupMessage = enforceEnglish(
     clean(item.followupMessage),
-    `Hi ${firstName}, following up in case the brief slipped through. No worries if this isn't the right timing.`
+    `Hi ${firstName2}, following up in case the brief slipped through. No worries if this isn't the right timing.`
   );
   return {
     name: clean(item.name),
@@ -1086,6 +1757,7 @@ I'm testing it with public affairs profiles before a proper launch. If the angle
     recommendedTemplate: clean(item.recommendedTemplate),
     connectionMessage: connectionMessage.slice(0, 300),
     reportMessage,
+    noNoteReportMessage,
     followupMessage
   };
 }
@@ -1105,6 +1777,55 @@ function enforceEnglish(value, fallback) {
   const lower = value.toLowerCase();
   return frenchMarkers.some((marker) => lower.includes(marker)) ? fallback : value;
 }
+function noPriorNoteCopy(value, fallback) {
+  if (!/\b(as promised|brief i mentioned|brief i promised|comme promis|brief promis|key topics|professionals like yourself|might be of interest|any initial thoughts|greatly appreciated)\b/i.test(value)) return value;
+  return fallback;
+}
+function isGenericBriefTopic(value) {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  return [
+    "policy",
+    "public policy",
+    "communications",
+    "public affairs",
+    "eu affairs",
+    "regulation",
+    "strategy",
+    "stakeholder management"
+  ].includes(normalized);
+}
+function fallbackBriefTopic(item) {
+  const text = `${clean(item.position)} ${clean(item.about)} ${clean(item.rationale)} ${clean(item.recommendedTemplate)}`.toLowerCase();
+  if (/\b(ai|artificial intelligence|ai act)\b/.test(text)) return "AI Act";
+  if (/\b(energy|climate|grid|power)\b/.test(text)) return "Energy security";
+  if (/\b(competitiveness|industry|industrial)\b/.test(text)) return "EU competitiveness";
+  if (/\b(trade|tariff|canada|market access)\b/.test(text)) return "Trade tensions";
+  if (/\b(privacy|gdpr|data)\b/.test(text)) return "Data privacy";
+  if (/\b(digital|tech|platform)\b/.test(text)) return "Tech regulation";
+  if (/\b(communications|comms|reputation|narrative|editorial)\b/.test(text)) return "Narrative risk";
+  return "Policy backlash";
+}
+function noNoteFallbackCopy(firstName2, briefTopic, position, about, template) {
+  const topic = briefTopic || "your policy area";
+  const context = prospectContext(position, about, template);
+  return `Hi ${firstName2},
+
+Thanks for connecting. I'm building Tempolis, a tool for public affairs narrative briefs, and I prepared a short brief on ${topic} because it seems close to your work on ${context}.
+
+[shared link]
+
+If the angle feels useful, or if the signal is off for your workflow, your feedback would be very helpful.`;
+}
+function prospectContext(position, about, template) {
+  const text = `${clean(position)} ${clean(about)} ${clean(template)}`.toLowerCase();
+  if (/\b(ai|artificial intelligence|digital|tech|technology|platform|data|privacy|gdpr)\b/.test(text)) return "tech policy and regulation";
+  if (/\b(energy|climate|sustainability|power|grid)\b/.test(text)) return "energy and policy strategy";
+  if (/\b(health|pharma|medical|biotech)\b/.test(text)) return "health policy and public affairs";
+  if (/\b(finance|bank|fintech|payments|competition)\b/.test(text)) return "regulated markets and public affairs";
+  if (/\b(communications|comms|media|narrative|reputation)\b/.test(text)) return "strategic communications";
+  if (/\b(government affairs|public affairs|policy|regulatory|eu affairs|brussels)\b/.test(text)) return "public affairs and policy";
+  return "policy and public affairs";
+}
 function normalizeHeader(value) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -1117,7 +1838,7 @@ const meta$3 = () => [{
   name: "description",
   content: "Analyze a pasted LinkedIn outreach batch with OpenRouter."
 }];
-async function action$1({
+async function action$2({
   request
 }) {
   const formData = await request.formData();
@@ -1142,17 +1863,23 @@ const batch = UNSAFE_withComponentProps(function Batch() {
     name: "",
     position: "",
     profileUrl: "",
-    about: ""
+    about: "",
+    signals: "",
+    briefDirection: ""
   }, {
     name: "",
     position: "",
     profileUrl: "",
-    about: ""
+    about: "",
+    signals: "",
+    briefDirection: ""
   }, {
     name: "",
     position: "",
     profileUrl: "",
-    about: ""
+    about: "",
+    signals: "",
+    briefDirection: ""
   }]);
   const tablePayload = toTsv(rows);
   return /* @__PURE__ */ jsx("main", {
@@ -1162,7 +1889,7 @@ const batch = UNSAFE_withComponentProps(function Batch() {
       children: [/* @__PURE__ */ jsxs("header", {
         className: "flex flex-col gap-4 border-b border-stone-300 pb-6 md:flex-row md:items-end md:justify-between",
         children: [/* @__PURE__ */ jsxs("div", {
-          children: [/* @__PURE__ */ jsxs(Link, {
+          children: [/* @__PURE__ */ jsxs(Link$1, {
             to: "/",
             className: "inline-flex items-center gap-2 text-sm font-medium text-teal-700 hover:text-teal-900",
             children: [/* @__PURE__ */ jsx(ArrowLeft, {
@@ -1208,7 +1935,9 @@ const batch = UNSAFE_withComponentProps(function Batch() {
                   name: "",
                   position: "",
                   profileUrl: "",
-                  about: ""
+                  about: "",
+                  signals: "",
+                  briefDirection: ""
                 }]),
                 className: "inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 font-medium hover:border-teal-700",
                 children: [/* @__PURE__ */ jsx(Plus, {
@@ -1218,7 +1947,7 @@ const batch = UNSAFE_withComponentProps(function Batch() {
             }), /* @__PURE__ */ jsx("div", {
               className: "mt-4 overflow-x-auto rounded-lg border border-stone-300",
               children: /* @__PURE__ */ jsxs("table", {
-                className: "min-w-[1050px] w-full border-collapse bg-white text-sm",
+                className: "min-w-[1480px] w-full border-collapse bg-white text-sm",
                 children: [/* @__PURE__ */ jsx("thead", {
                   className: "bg-stone-50 text-left text-xs font-bold uppercase text-stone-500",
                   children: /* @__PURE__ */ jsxs("tr", {
@@ -1232,8 +1961,14 @@ const batch = UNSAFE_withComponentProps(function Batch() {
                       className: "w-[260px] border-b border-stone-300 px-3 py-2",
                       children: "Profile URL"
                     }), /* @__PURE__ */ jsx("th", {
-                      className: "border-b border-stone-300 px-3 py-2",
+                      className: "w-[300px] border-b border-stone-300 px-3 py-2",
                       children: "About"
+                    }), /* @__PURE__ */ jsx("th", {
+                      className: "w-[300px] border-b border-stone-300 px-3 py-2",
+                      children: "Signals / posts"
+                    }), /* @__PURE__ */ jsx("th", {
+                      className: "w-[190px] border-b border-stone-300 px-3 py-2",
+                      children: "Brief direction"
                     }), /* @__PURE__ */ jsx("th", {
                       className: "w-[56px] border-b border-stone-300 px-3 py-2"
                     })]
@@ -1270,6 +2005,22 @@ const batch = UNSAFE_withComponentProps(function Batch() {
                         rows: 2,
                         placeholder: "Short profile summary, LinkedIn about, sector, topics...",
                         className: "min-h-20 w-full resize-y rounded-md border border-stone-300 bg-stone-50 px-3 py-2 outline-none focus:border-teal-700"
+                      })
+                    }), /* @__PURE__ */ jsx("td", {
+                      className: "border-b border-stone-200 p-2",
+                      children: /* @__PURE__ */ jsx("textarea", {
+                        value: row.signals,
+                        onChange: (event) => updateRow(index, "signals", event.target.value),
+                        rows: 2,
+                        placeholder: "Recent posts, experience details, client context, recurring topics...",
+                        className: "min-h-20 w-full resize-y rounded-md border border-stone-300 bg-stone-50 px-3 py-2 outline-none focus:border-teal-700"
+                      })
+                    }), /* @__PURE__ */ jsx("td", {
+                      className: "border-b border-stone-200 p-2",
+                      children: /* @__PURE__ */ jsx(CellInput, {
+                        value: row.briefDirection,
+                        placeholder: "AI Act, EU competitiveness...",
+                        onChange: (value) => updateRow(index, "briefDirection", value)
                       })
                     }), /* @__PURE__ */ jsx("td", {
                       className: "border-b border-stone-200 p-2",
@@ -1339,15 +2090,15 @@ function CellInput({
   });
 }
 function toTsv(rows) {
-  const header = ["Name", "Position", "Profile URL", "About"];
-  const body = rows.filter(isFilledRow).map((row) => [row.name, row.position, row.profileUrl, row.about].map(cleanCell).join("	"));
+  const header = ["Name", "Position", "Profile URL", "About", "Signals", "Brief direction"];
+  const body = rows.filter(isFilledRow).map((row) => [row.name, row.position, row.profileUrl, row.about, row.signals, row.briefDirection].map(cleanCell).join("	"));
   return [header.join("	"), ...body].join("\n");
 }
 function cleanCell(value) {
   return value.replace(/\t/g, " ").replace(/\r?\n/g, " ").trim();
 }
 function isFilledRow(row) {
-  return Boolean(row.name.trim() || row.position.trim() || row.profileUrl.trim() || row.about.trim());
+  return Boolean(row.name.trim() || row.position.trim() || row.profileUrl.trim() || row.about.trim() || row.signals.trim() || row.briefDirection.trim());
 }
 function Results({
   analysis
@@ -1406,7 +2157,7 @@ function Results({
       className: "rounded-lg border border-stone-300 bg-white p-5",
       children: [/* @__PURE__ */ jsxs("h2", {
         className: "flex items-center gap-2 text-xl font-semibold",
-        children: [/* @__PURE__ */ jsx(CheckCircle2, {
+        children: [/* @__PURE__ */ jsx(CircleCheck, {
           size: 20
         }), "Full classification"]
       }), /* @__PURE__ */ jsx("div", {
@@ -1450,11 +2201,14 @@ function ActionCard({
         children: "LinkedIn"
       })]
     }), /* @__PURE__ */ jsx(Message, {
-      title: "Connection request",
+      title: "Connection note",
       value: prospect.connectionMessage
     }), /* @__PURE__ */ jsx(Message, {
-      title: "After acceptance",
+      title: "After acceptance, with note",
       value: prospect.reportMessage
+    }), /* @__PURE__ */ jsx(Message, {
+      title: "After acceptance, without note",
+      value: prospect.noNoteReportMessage
     }), /* @__PURE__ */ jsx(Message, {
       title: "Follow-up J+5",
       value: prospect.followupMessage
@@ -1551,7 +2305,7 @@ function Empty({
 }
 const route2 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  action: action$1,
+  action: action$2,
   default: batch,
   meta: meta$3
 }, Symbol.toStringTag, { value: "Module" }));
@@ -1690,7 +2444,7 @@ const discover = UNSAFE_withComponentProps(function SearchPage() {
       children: [/* @__PURE__ */ jsxs("header", {
         className: "flex flex-col gap-4 border-b border-stone-300 pb-6 md:flex-row md:items-end md:justify-between",
         children: [/* @__PURE__ */ jsxs("div", {
-          children: [/* @__PURE__ */ jsxs(Link, {
+          children: [/* @__PURE__ */ jsxs(Link$1, {
             to: "/",
             className: "inline-flex items-center gap-2 text-sm font-medium text-teal-700 hover:text-teal-900",
             children: [/* @__PURE__ */ jsx(ArrowLeft, {
@@ -1703,7 +2457,7 @@ const discover = UNSAFE_withComponentProps(function SearchPage() {
             className: "mt-2 max-w-3xl text-stone-600",
             children: "Google-powered LinkedIn prospecting queries based on the Tempolis outreach playbook. Open a search, shortlist profiles, then add them through New batch."
           })]
-        }), /* @__PURE__ */ jsx(Link, {
+        }), /* @__PURE__ */ jsx(Link$1, {
           to: "/batch",
           className: "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-4 font-medium text-white hover:bg-teal-800",
           children: "Add shortlisted prospects"
@@ -1811,11 +2565,11 @@ function loader$1() {
   return getDashboard();
 }
 const search = UNSAFE_withComponentProps(function SearchCrmPage() {
-  const data = useLoaderData();
+  const data2 = useLoaderData();
   const [params, setParams] = useSearchParams();
   const query = params.get("q") || "";
   const status = params.get("status") || "all";
-  const results = filterProspects(data.prospects, query, status);
+  const results = filterProspects(data2.prospects, query, status);
   return /* @__PURE__ */ jsx("main", {
     className: "min-h-screen bg-stone-100 px-4 py-8 text-stone-950 sm:px-6 lg:px-8",
     children: /* @__PURE__ */ jsxs("div", {
@@ -1823,7 +2577,7 @@ const search = UNSAFE_withComponentProps(function SearchCrmPage() {
       children: [/* @__PURE__ */ jsxs("header", {
         className: "flex flex-col gap-4 border-b border-stone-300 pb-6 md:flex-row md:items-end md:justify-between",
         children: [/* @__PURE__ */ jsxs("div", {
-          children: [/* @__PURE__ */ jsxs(Link, {
+          children: [/* @__PURE__ */ jsxs(Link$1, {
             to: "/",
             className: "inline-flex items-center gap-2 text-sm font-medium text-teal-700 hover:text-teal-900",
             children: [/* @__PURE__ */ jsx(ArrowLeft, {
@@ -1836,7 +2590,7 @@ const search = UNSAFE_withComponentProps(function SearchCrmPage() {
             className: "mt-2 max-w-3xl text-stone-600",
             children: "Search prospects already stored in SQLite, including archived and skipped profiles, to avoid duplicates."
           })]
-        }), /* @__PURE__ */ jsx(Link, {
+        }), /* @__PURE__ */ jsx(Link$1, {
           to: "/discover",
           className: "inline-flex min-h-11 items-center justify-center rounded-md border border-stone-300 bg-white px-4 font-medium text-stone-900 hover:border-teal-700",
           children: "Discover new prospects"
@@ -1887,7 +2641,7 @@ const search = UNSAFE_withComponentProps(function SearchCrmPage() {
             children: "Results"
           }), /* @__PURE__ */ jsxs("p", {
             className: "text-sm text-stone-600",
-            children: [results.length, " of ", data.prospects.length, " prospects"]
+            children: [results.length, " of ", data2.prospects.length, " prospects"]
           })]
         }), /* @__PURE__ */ jsxs("div", {
           className: "overflow-x-auto",
@@ -1921,7 +2675,7 @@ const search = UNSAFE_withComponentProps(function SearchCrmPage() {
                 className: "hover:bg-stone-50",
                 children: [/* @__PURE__ */ jsxs("td", {
                   className: "border-b border-stone-200 px-4 py-3",
-                  children: [/* @__PURE__ */ jsx(Link, {
+                  children: [/* @__PURE__ */ jsx(Link$1, {
                     to: `/prospects/${prospect.id}`,
                     className: "font-semibold text-stone-950 hover:text-teal-800",
                     children: prospect.name
@@ -2000,10 +2754,99 @@ const route4 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   loader: loader$1,
   meta: meta$1
 }, Symbol.toStringTag, { value: "Module" }));
+async function action$1({
+  request
+}) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders()
+    });
+  }
+  if (request.method !== "POST") {
+    return data({
+      ok: false,
+      error: "Method not allowed"
+    }, {
+      status: 405,
+      headers: corsHeaders()
+    });
+  }
+  const payload = await readPayload(request);
+  const profileUrl = normalizeLinkedInUrl(String(payload.profileUrl || ""));
+  if (!profileUrl.includes("linkedin.com/in/")) {
+    return data({
+      ok: false,
+      error: "Open a LinkedIn profile page first."
+    }, {
+      status: 400,
+      headers: corsHeaders()
+    });
+  }
+  const existingId = findProspectByProfileUrl(profileUrl);
+  if (existingId) {
+    setProspectOutreachPreference(existingId, normalizeOutreachMode(payload.outreachMode));
+    return respond(payload, existingId, true);
+  }
+  const table = prospectEvidenceToTable({
+    ...payload,
+    profileUrl
+  });
+  const analysis = await analyzeProspectTable(table);
+  importAnalyzedProspects(analysis.prospects);
+  const id = findProspectByProfileUrl(profileUrl);
+  if (!id) {
+    return data({
+      ok: false,
+      error: "Profile analyzed but not found after import."
+    }, {
+      status: 500,
+      headers: corsHeaders()
+    });
+  }
+  setProspectOutreachPreference(id, normalizeOutreachMode(payload.outreachMode));
+  return respond(payload, id, false);
+}
+function respond(payload, id, existing) {
+  if (payload.open) return redirect(`/prospects/${id}`);
+  return data({
+    ok: true,
+    id,
+    existing,
+    url: `http://localhost:4377/prospects/${id}`
+  }, {
+    headers: corsHeaders()
+  });
+}
+function normalizeLinkedInUrl(value) {
+  return value.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
+}
+function normalizeOutreachMode(value) {
+  return value === "with_note" ? "with_note" : "no_note";
+}
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
+}
+async function readPayload(request) {
+  const contentType = request.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return await request.json();
+  }
+  const text = await request.text();
+  return JSON.parse(text);
+}
+const route5 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  action: action$1
+}, Symbol.toStringTag, { value: "Module" }));
 const meta = ({
-  data
+  data: data2
 }) => {
-  const name = data?.detail?.prospect?.name || "Prospect";
+  const name = data2?.detail?.prospect?.name || "Prospect";
   return [{
     title: `${name} · Tempolis Outreach`
   }];
@@ -2027,7 +2870,10 @@ async function action({
   params
 }) {
   const formData = await request.formData();
-  runProspectAction(formData);
+  await runProspectAction(formData);
+  if (String(formData.get("intent") || "") === "deleteProspect") {
+    return redirect("/");
+  }
   return redirect(`/prospects/${params.id}`);
 }
 const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
@@ -2038,10 +2884,15 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
     prospect,
     tasks,
     events,
+    replies,
     today
   } = detail;
   const openTasks = tasks.filter((task) => task.status === "open");
   const doneTasks = tasks.filter((task) => task.status !== "open");
+  const showConnectionNote = prospect.outreach_mode !== "no_note" || prospect.connection_note_sent === 1;
+  const connectionLocked = Boolean(prospect.connection_sent_date);
+  const reportLocked = Boolean(prospect.report_sent_date);
+  const archiveMode = Boolean(prospect.report_sent_date) || ["reply_sent", "followup_sent"].includes(prospect.status);
   return /* @__PURE__ */ jsx("main", {
     className: "min-h-screen bg-stone-100 px-4 py-8 text-stone-950 sm:px-6 lg:px-8",
     children: /* @__PURE__ */ jsxs("div", {
@@ -2049,7 +2900,7 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
       children: [/* @__PURE__ */ jsxs("header", {
         className: "flex flex-col gap-4 border-b border-stone-300 pb-6 md:flex-row md:items-start md:justify-between",
         children: [/* @__PURE__ */ jsxs("div", {
-          children: [/* @__PURE__ */ jsxs(Link, {
+          children: [/* @__PURE__ */ jsxs(Link$1, {
             to: "/",
             className: "inline-flex items-center gap-2 text-sm font-medium text-teal-700 hover:text-teal-900",
             children: [/* @__PURE__ */ jsx(ArrowLeft, {
@@ -2077,8 +2928,15 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
           }), /* @__PURE__ */ jsxs(Badge, {
             children: ["Wave ", prospect.wave || "-"]
           }), /* @__PURE__ */ jsx(Badge, {
+            tone: prospect.outreach_mode === "no_note" ? "blue" : "green",
+            children: outreachModeLabel(prospect)
+          }), /* @__PURE__ */ jsx(Badge, {
             tone: "blue",
             children: prospect.status
+          }), /* @__PURE__ */ jsx(ArchiveControls, {
+            prospect
+          }), /* @__PURE__ */ jsx(DeleteProspectButton, {
+            prospect
           })]
         })]
       }), /* @__PURE__ */ jsxs("div", {
@@ -2098,17 +2956,87 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
                 today
               }, task.id)) : /* @__PURE__ */ jsx(EmptyState, {})
             })]
-          }), /* @__PURE__ */ jsxs("section", {
-            className: "rounded-lg border border-stone-300 bg-white p-5",
-            children: [/* @__PURE__ */ jsx(SectionTitle, {
-              title: "Brief",
-              detail: "Topic and shared URL."
-            }), /* @__PURE__ */ jsxs("div", {
+          }), /* @__PURE__ */ jsx(CollapsibleSection, {
+            title: "Outreach mode",
+            detail: "Switch the copy strategy before sending.",
+            defaultOpen: !archiveMode,
+            children: /* @__PURE__ */ jsxs("div", {
+              className: "mt-4 grid gap-3 rounded-lg border border-stone-200 bg-stone-50 p-4",
+              children: [/* @__PURE__ */ jsxs("div", {
+                children: [/* @__PURE__ */ jsx("p", {
+                  className: "font-semibold",
+                  children: outreachModeLabel(prospect)
+                }), /* @__PURE__ */ jsx("p", {
+                  className: "mt-1 text-sm text-stone-600",
+                  children: prospect.outreach_mode === "no_note" ? "The request goes out without a custom note. The first real message is generated for after acceptance." : "The current sequence assumes a custom connection note that tees up the brief."
+                })]
+              }), /* @__PURE__ */ jsxs("div", {
+                className: "flex flex-wrap gap-2",
+                children: [/* @__PURE__ */ jsx(ActionButton, {
+                  intent: "generateNoNoteMode",
+                  prospectId: prospect.id,
+                  label: "Generate no-note mode",
+                  icon: /* @__PURE__ */ jsx(RefreshCw, {
+                    size: 16
+                  }),
+                  primary: prospect.outreach_mode !== "no_note"
+                }), /* @__PURE__ */ jsx(ActionButton, {
+                  intent: "switchToWithNoteMode",
+                  prospectId: prospect.id,
+                  label: "Use with-note mode",
+                  icon: /* @__PURE__ */ jsx(Send, {
+                    size: 16
+                  }),
+                  primary: prospect.outreach_mode === "no_note"
+                })]
+              })]
+            })
+          }), /* @__PURE__ */ jsx(CollapsibleSection, {
+            title: "Brief",
+            detail: "Topic, preparation notes and shared URL.",
+            defaultOpen: !archiveMode,
+            children: /* @__PURE__ */ jsxs("div", {
               className: "mt-4 grid gap-4 md:grid-cols-2",
-              children: [/* @__PURE__ */ jsx(InfoBlock, {
-                title: "Topic",
-                value: prospect.brief_topic || "No brief topic",
-                detail: prospect.preparation_notes || void 0
+              children: [/* @__PURE__ */ jsxs(Form, {
+                method: "post",
+                className: "border-t border-stone-200 pt-3",
+                children: [/* @__PURE__ */ jsx("input", {
+                  type: "hidden",
+                  name: "intent",
+                  value: "updateBriefStrategy"
+                }), /* @__PURE__ */ jsx("input", {
+                  type: "hidden",
+                  name: "prospectId",
+                  value: prospect.id
+                }), /* @__PURE__ */ jsx("label", {
+                  className: "text-sm font-semibold",
+                  htmlFor: "briefTopic",
+                  children: "Topic"
+                }), /* @__PURE__ */ jsx("input", {
+                  id: "briefTopic",
+                  name: "briefTopic",
+                  defaultValue: prospect.brief_topic || "",
+                  required: true,
+                  maxLength: 80,
+                  placeholder: "Narrative risk",
+                  className: "mt-2 min-h-10 w-full rounded-md border border-stone-300 bg-stone-50 px-3 outline-none focus:border-teal-700"
+                }), /* @__PURE__ */ jsx("label", {
+                  className: "mt-3 block text-sm font-semibold",
+                  htmlFor: "briefPreparation",
+                  children: "Preparation notes"
+                }), /* @__PURE__ */ jsx("textarea", {
+                  id: "briefPreparation",
+                  name: "briefPreparation",
+                  defaultValue: prospect.preparation_notes || "",
+                  rows: 4,
+                  placeholder: "Why this subject fits the profile, source signal, angle to prepare...",
+                  className: "mt-2 min-h-28 w-full resize-y rounded-md border border-stone-300 bg-stone-50 px-3 py-2 outline-none focus:border-teal-700"
+                }), /* @__PURE__ */ jsxs("button", {
+                  className: "mt-3 inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 font-medium hover:border-teal-700",
+                  children: [/* @__PURE__ */ jsx(Save, {
+                    size: 16
+                  }), "Save brief theme"]
+                })]
               }), /* @__PURE__ */ jsxs("div", {
                 className: "border-t border-stone-200 pt-3",
                 children: [/* @__PURE__ */ jsx("p", {
@@ -2141,30 +3069,46 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
                     className: "min-h-10 rounded-md border border-stone-300 bg-stone-50 px-3 outline-none focus:border-teal-700"
                   }), /* @__PURE__ */ jsxs("button", {
                     className: "inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 font-medium hover:border-teal-700",
-                    children: [/* @__PURE__ */ jsx(LinkIcon, {
+                    children: [/* @__PURE__ */ jsx(Link, {
                       size: 16
                     }), "Add URL"]
                   })]
                 })]
               })]
-            })]
+            })
+          }), /* @__PURE__ */ jsx(CollapsibleSection, {
+            title: "Messages",
+            detail: "Copy exact LinkedIn copy.",
+            defaultOpen: !archiveMode,
+            children: /* @__PURE__ */ jsxs("div", {
+              className: "mt-4 grid gap-3",
+              children: [showConnectionNote ? /* @__PURE__ */ jsx(MessageEditor, {
+                prospectId: prospect.id,
+                title: "Connection note",
+                type: "connection",
+                content: prospect.connection_message,
+                locked: connectionLocked
+              }) : /* @__PURE__ */ jsx(NoNoteCallout, {}), /* @__PURE__ */ jsx(MessageEditor, {
+                prospectId: prospect.id,
+                title: prospect.outreach_mode === "no_note" ? "First message after acceptance" : "After acceptance",
+                type: prospect.outreach_mode === "no_note" ? "report_no_note" : "report",
+                content: prospect.post_acceptance_message,
+                locked: reportLocked
+              }), /* @__PURE__ */ jsx(MessageEditor, {
+                prospectId: prospect.id,
+                title: "Follow-up J+5",
+                type: "followup",
+                content: prospect.followup_message
+              })]
+            })
           }), /* @__PURE__ */ jsxs("section", {
             className: "rounded-lg border border-stone-300 bg-white p-5",
             children: [/* @__PURE__ */ jsx(SectionTitle, {
-              title: "Messages",
-              detail: "Copy exact LinkedIn copy."
-            }), /* @__PURE__ */ jsxs("div", {
-              className: "mt-4 grid gap-3",
-              children: [/* @__PURE__ */ jsx(MessageBlock, {
-                title: "Connection request",
-                content: prospect.connection_message
-              }), /* @__PURE__ */ jsx(MessageBlock, {
-                title: "After acceptance",
-                content: prospect.report_message
-              }), /* @__PURE__ */ jsx(MessageBlock, {
-                title: "Follow-up J+5",
-                content: prospect.followup_message
-              })]
+              title: "Reply handling",
+              detail: "If Marc replies, paste it here and answer instead of following up."
+            }), /* @__PURE__ */ jsx(ReplyPanel, {
+              prospect,
+              replies
             })]
           }), /* @__PURE__ */ jsxs("section", {
             className: "rounded-lg border border-stone-300 bg-white p-5",
@@ -2245,18 +3189,48 @@ function OpenTask({
 }
 function taskActions(task, prospect) {
   if (task.type === "send_connection") {
+    if (prospect.outreach_mode === "no_note") {
+      return /* @__PURE__ */ jsxs(Fragment, {
+        children: [/* @__PURE__ */ jsx(ActionButton, {
+          intent: "markConnectionSentWithoutNote",
+          prospectId: prospect.id,
+          label: "Sent without note",
+          icon: /* @__PURE__ */ jsx(UserCheck, {
+            size: 16
+          }),
+          primary: true
+        }), /* @__PURE__ */ jsx(CopyButton, {
+          label: "Copy note",
+          value: prospect.connection_message || ""
+        }), /* @__PURE__ */ jsx(ActionButton, {
+          intent: "markConnectionSentWithNote",
+          prospectId: prospect.id,
+          label: "Sent with note",
+          icon: /* @__PURE__ */ jsx(Send, {
+            size: 16
+          })
+        })]
+      });
+    }
     return /* @__PURE__ */ jsxs(Fragment, {
       children: [/* @__PURE__ */ jsx(CopyButton, {
-        label: "Copy request",
+        label: "Copy note",
         value: prospect.connection_message || ""
       }), /* @__PURE__ */ jsx(ActionButton, {
-        intent: "markConnectionSent",
+        intent: "markConnectionSentWithNote",
         prospectId: prospect.id,
-        label: "Mark sent",
+        label: "Sent with note",
         icon: /* @__PURE__ */ jsx(Send, {
           size: 16
         }),
         primary: true
+      }), /* @__PURE__ */ jsx(ActionButton, {
+        intent: "markConnectionSentWithoutNote",
+        prospectId: prospect.id,
+        label: "Sent without note",
+        icon: /* @__PURE__ */ jsx(UserCheck, {
+          size: 16
+        })
       })]
     });
   }
@@ -2284,12 +3258,12 @@ function taskActions(task, prospect) {
   if (task.type === "send_report") {
     return /* @__PURE__ */ jsxs(Fragment, {
       children: [/* @__PURE__ */ jsx(CopyButton, {
-        label: "Copy report",
-        value: prospect.report_message || ""
+        label: "Copy message",
+        value: prospect.post_acceptance_message || ""
       }), /* @__PURE__ */ jsx(ActionButton, {
         intent: "markReportSent",
         prospectId: prospect.id,
-        label: "Mark report sent",
+        label: "Mark sent",
         icon: /* @__PURE__ */ jsx(Check, {
           size: 16
         }),
@@ -2353,37 +3327,93 @@ function SectionTitle({
     })]
   });
 }
-function InfoBlock({
+function CollapsibleSection({
   title,
-  value,
-  detail
+  detail,
+  defaultOpen,
+  children
 }) {
-  return /* @__PURE__ */ jsxs("div", {
-    className: "border-t border-stone-200 pt-3",
-    children: [/* @__PURE__ */ jsx("p", {
-      className: "text-sm font-semibold",
-      children: title
-    }), /* @__PURE__ */ jsx("p", {
-      className: "mt-1 text-sm text-stone-700",
-      children: value
-    }), detail ? /* @__PURE__ */ jsx("p", {
-      className: "mt-1 text-sm text-stone-500",
-      children: detail
-    }) : null]
+  return /* @__PURE__ */ jsxs("details", {
+    className: "rounded-lg border border-stone-300 bg-white p-5",
+    open: defaultOpen,
+    children: [/* @__PURE__ */ jsx("summary", {
+      className: "cursor-pointer list-none",
+      children: /* @__PURE__ */ jsx(SectionTitle, {
+        title,
+        detail
+      })
+    }), children]
   });
 }
-function MessageBlock({
+function MessageEditor({
+  prospectId,
   title,
-  content
+  type,
+  content,
+  locked = false
 }) {
   if (!content) return null;
-  return /* @__PURE__ */ jsxs("div", {
+  if (locked) return /* @__PURE__ */ jsx(ReadonlyMessage, {
+    title,
+    content
+  });
+  return /* @__PURE__ */ jsxs(Form, {
+    method: "post",
     className: "border-t border-stone-200 pt-3",
-    children: [/* @__PURE__ */ jsxs("div", {
+    children: [/* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "intent",
+      value: "updateMessage"
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "prospectId",
+      value: prospectId
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "messageType",
+      value: type
+    }), /* @__PURE__ */ jsxs("div", {
       className: "flex items-center justify-between gap-3",
       children: [/* @__PURE__ */ jsx("p", {
         className: "text-sm font-semibold",
         children: title
+      }), /* @__PURE__ */ jsxs("div", {
+        className: "flex gap-2",
+        children: [/* @__PURE__ */ jsx(CopyButton, {
+          label: "Copy",
+          value: content,
+          compact: true
+        }), /* @__PURE__ */ jsxs("button", {
+          className: "inline-flex min-h-8 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-2 text-sm font-medium text-stone-800 hover:border-teal-700",
+          children: [/* @__PURE__ */ jsx(Save, {
+            size: 14
+          }), "Save"]
+        })]
+      })]
+    }), /* @__PURE__ */ jsx("textarea", {
+      name: "messageContent",
+      defaultValue: content,
+      rows: Math.max(3, Math.min(8, content.split("\n").length + 1)),
+      className: "mt-2 min-h-28 w-full resize-y rounded-md border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700 outline-none focus:border-teal-700"
+    })]
+  });
+}
+function ReadonlyMessage({
+  title,
+  content
+}) {
+  return /* @__PURE__ */ jsxs("div", {
+    className: "border-t border-stone-200 pt-3",
+    children: [/* @__PURE__ */ jsxs("div", {
+      className: "flex items-center justify-between gap-3",
+      children: [/* @__PURE__ */ jsxs("div", {
+        children: [/* @__PURE__ */ jsx("p", {
+          className: "text-sm font-semibold",
+          children: title
+        }), /* @__PURE__ */ jsx("p", {
+          className: "mt-1 text-xs font-medium text-stone-500",
+          children: "Sent. Locked to preserve history."
+        })]
       }), /* @__PURE__ */ jsx(CopyButton, {
         label: "Copy",
         value: content,
@@ -2392,6 +3422,150 @@ function MessageBlock({
     }), /* @__PURE__ */ jsx("p", {
       className: "mt-2 whitespace-pre-wrap rounded-md border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700",
       children: content
+    })]
+  });
+}
+function ReplyPanel({
+  prospect,
+  replies
+}) {
+  const latest = replies[0];
+  return /* @__PURE__ */ jsxs("div", {
+    className: "mt-4 grid gap-4",
+    children: [latest ? /* @__PURE__ */ jsx(ReplyEditor, {
+      prospect,
+      reply: latest
+    }) : null, /* @__PURE__ */ jsxs(Form, {
+      method: "post",
+      className: "rounded-lg border border-stone-200 bg-stone-50 p-4",
+      children: [/* @__PURE__ */ jsx("input", {
+        type: "hidden",
+        name: "intent",
+        value: "addProspectReply"
+      }), /* @__PURE__ */ jsx("input", {
+        type: "hidden",
+        name: "prospectId",
+        value: prospect.id
+      }), /* @__PURE__ */ jsx("label", {
+        className: "text-sm font-semibold",
+        htmlFor: "inboundContent",
+        children: "Prospect reply"
+      }), /* @__PURE__ */ jsx("textarea", {
+        id: "inboundContent",
+        name: "inboundContent",
+        rows: 4,
+        required: true,
+        placeholder: "Paste the LinkedIn reply here...",
+        className: "mt-2 min-h-28 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-700"
+      }), /* @__PURE__ */ jsx("label", {
+        className: "mt-3 block text-sm font-semibold",
+        htmlFor: "suggestedResponse",
+        children: "Draft response"
+      }), /* @__PURE__ */ jsx("textarea", {
+        id: "suggestedResponse",
+        name: "suggestedResponse",
+        rows: 4,
+        placeholder: "Optional. Leave empty and the app will create a lightweight fallback.",
+        className: "mt-2 min-h-28 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-700"
+      }), /* @__PURE__ */ jsxs("button", {
+        className: "mt-3 inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-3 font-medium text-white hover:bg-teal-800",
+        children: [/* @__PURE__ */ jsx(MessageSquareReply, {
+          size: 16
+        }), "Save reply"]
+      })]
+    })]
+  });
+}
+function ReplyEditor({
+  prospect,
+  reply
+}) {
+  return /* @__PURE__ */ jsxs("div", {
+    className: "rounded-lg border border-stone-200 bg-stone-50 p-4",
+    children: [/* @__PURE__ */ jsxs("div", {
+      className: "flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between",
+      children: [/* @__PURE__ */ jsxs("div", {
+        children: [/* @__PURE__ */ jsx("p", {
+          className: "text-sm font-semibold",
+          children: "Latest reply"
+        }), /* @__PURE__ */ jsx("p", {
+          className: "mt-1 text-xs text-stone-500",
+          children: reply.created_at
+        })]
+      }), reply.sent_at ? /* @__PURE__ */ jsxs(Badge, {
+        tone: "green",
+        children: ["sent ", reply.sent_at]
+      }) : /* @__PURE__ */ jsx(Badge, {
+        tone: "blue",
+        children: "response draft"
+      })]
+    }), /* @__PURE__ */ jsx("p", {
+      className: "mt-3 whitespace-pre-wrap rounded-md border border-stone-200 bg-white p-3 text-sm text-stone-700",
+      children: reply.inbound_content
+    }), /* @__PURE__ */ jsxs(Form, {
+      method: "post",
+      className: "mt-3",
+      children: [/* @__PURE__ */ jsx("input", {
+        type: "hidden",
+        name: "intent",
+        value: "updateReplyResponse"
+      }), /* @__PURE__ */ jsx("input", {
+        type: "hidden",
+        name: "prospectId",
+        value: prospect.id
+      }), /* @__PURE__ */ jsx("input", {
+        type: "hidden",
+        name: "replyId",
+        value: reply.id
+      }), /* @__PURE__ */ jsxs("div", {
+        className: "flex items-center justify-between gap-3",
+        children: [/* @__PURE__ */ jsx("p", {
+          className: "text-sm font-semibold",
+          children: "Response to send"
+        }), /* @__PURE__ */ jsxs("div", {
+          className: "flex gap-2",
+          children: [/* @__PURE__ */ jsx(CopyButton, {
+            label: "Copy",
+            value: reply.suggested_response || "",
+            compact: true
+          }), /* @__PURE__ */ jsxs("button", {
+            className: "inline-flex min-h-8 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-2 text-sm font-medium text-stone-800 hover:border-teal-700",
+            children: [/* @__PURE__ */ jsx(Save, {
+              size: 14
+            }), "Save"]
+          })]
+        })]
+      }), /* @__PURE__ */ jsx("textarea", {
+        name: "suggestedResponse",
+        defaultValue: reply.suggested_response || "",
+        rows: 5,
+        required: true,
+        disabled: Boolean(reply.sent_at),
+        className: "mt-2 min-h-28 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-700 disabled:bg-stone-100 disabled:text-stone-500"
+      })]
+    }), !reply.sent_at ? /* @__PURE__ */ jsx(ActionButton, {
+      intent: "markReplySent",
+      prospectId: prospect.id,
+      label: "Mark response sent",
+      icon: /* @__PURE__ */ jsx(Check, {
+        size: 16
+      }),
+      primary: true,
+      extra: {
+        replyId: String(reply.id)
+      }
+    }) : null]
+  });
+}
+function NoNoteCallout() {
+  return /* @__PURE__ */ jsxs("div", {
+    className: "border-t border-stone-200 pt-3",
+    children: [/* @__PURE__ */ jsx("p", {
+      className: "text-sm font-semibold",
+      children: "Connection note"
+    }), /* @__PURE__ */ jsx("p", {
+      className: "mt-2 rounded-md border border-stone-200 bg-stone-50 p-3 text-sm text-stone-600",
+      children: "No custom note was sent. Use the first message after acceptance instead."
     })]
   });
 }
@@ -2405,13 +3579,18 @@ function Badge({
     children
   });
 }
+function outreachModeLabel(prospect) {
+  if (prospect.status === "to_contact") return "note optional";
+  return prospect.outreach_mode === "no_note" ? "no note" : "with note";
+}
 function ActionButton({
   intent,
   prospectId,
   label,
   icon,
   primary = false,
-  danger = false
+  danger = false,
+  extra
 }) {
   const className = primary ? "border-teal-700 bg-teal-700 text-white hover:bg-teal-800" : danger ? "border-stone-300 bg-white text-red-700 hover:border-red-300" : "border-stone-300 bg-white text-stone-800 hover:border-teal-700";
   return /* @__PURE__ */ jsxs(Form, {
@@ -2424,10 +3603,60 @@ function ActionButton({
       type: "hidden",
       name: "prospectId",
       value: prospectId
-    }), /* @__PURE__ */ jsxs("button", {
+    }), extra ? Object.entries(extra).map(([key, value]) => /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: key,
+      value
+    }, key)) : null, /* @__PURE__ */ jsxs("button", {
       className: `inline-flex min-h-10 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium ${className}`,
       children: [icon, label]
     })]
+  });
+}
+function DeleteProspectButton({
+  prospect
+}) {
+  return /* @__PURE__ */ jsxs(Form, {
+    method: "post",
+    onSubmit: (event) => {
+      const confirmed = window.confirm(`Delete ${prospect.name} from the outreach database? This cannot be undone.`);
+      if (!confirmed) event.preventDefault();
+    },
+    children: [/* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "intent",
+      value: "deleteProspect"
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "prospectId",
+      value: prospect.id
+    }), /* @__PURE__ */ jsx("button", {
+      className: "inline-flex min-h-8 items-center justify-center rounded-full bg-red-50 px-2.5 text-xs font-semibold text-red-800 hover:bg-red-100",
+      children: "Delete"
+    })]
+  });
+}
+function ArchiveControls({
+  prospect
+}) {
+  if (prospect.status === "archived") {
+    return /* @__PURE__ */ jsx(ActionButton, {
+      intent: "reopenConversation",
+      prospectId: prospect.id,
+      label: "Reopen",
+      icon: /* @__PURE__ */ jsx(Undo2, {
+        size: 14
+      })
+    });
+  }
+  return /* @__PURE__ */ jsx(ActionButton, {
+    intent: "archiveProspect",
+    prospectId: prospect.id,
+    label: "Archive",
+    icon: /* @__PURE__ */ jsx(Archive, {
+      size: 14
+    }),
+    danger: true
   });
 }
 function CopyButton({
@@ -2450,14 +3679,14 @@ function EmptyState() {
     children: "Nothing here."
   });
 }
-const route5 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route6 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   action,
   default: prospect_$id,
   loader,
   meta
 }, Symbol.toStringTag, { value: "Module" }));
-const serverManifest = { "entry": { "module": "/assets/entry.client-wpF3L8rY.js", "imports": ["/assets/chunk-OE4NN4TA-Bj-DfG8v.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-D86rKXS6.js", "imports": ["/assets/chunk-OE4NN4TA-Bj-DfG8v.js", "/assets/createLucideIcon-NW3pMQ2X.js"], "css": ["/assets/root-CwZoTzeg.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-DTlmAI47.js", "imports": ["/assets/chunk-OE4NN4TA-Bj-DfG8v.js", "/assets/search-DAwDD2rP.js", "/assets/createLucideIcon-NW3pMQ2X.js", "/assets/plus-CwtOKOxv.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/batch": { "id": "routes/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-BcyRSq13.js", "imports": ["/assets/chunk-OE4NN4TA-Bj-DfG8v.js", "/assets/arrow-left-B1GfiVDv.js", "/assets/plus-CwtOKOxv.js", "/assets/createLucideIcon-NW3pMQ2X.js", "/assets/send-BawbtAsY.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-rFKkWMnF.js", "imports": ["/assets/chunk-OE4NN4TA-Bj-DfG8v.js", "/assets/arrow-left-B1GfiVDv.js", "/assets/createLucideIcon-NW3pMQ2X.js", "/assets/search-DAwDD2rP.js", "/assets/external-link-BX2jQCa9.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/search": { "id": "routes/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-BRE2lrAW.js", "imports": ["/assets/chunk-OE4NN4TA-Bj-DfG8v.js", "/assets/arrow-left-B1GfiVDv.js", "/assets/search-DAwDD2rP.js", "/assets/external-link-BX2jQCa9.js", "/assets/createLucideIcon-NW3pMQ2X.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "root", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-DFs84RSF.js", "imports": ["/assets/chunk-OE4NN4TA-Bj-DfG8v.js", "/assets/arrow-left-B1GfiVDv.js", "/assets/external-link-BX2jQCa9.js", "/assets/createLucideIcon-NW3pMQ2X.js", "/assets/send-BawbtAsY.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-ff5b0a2e.js", "version": "ff5b0a2e", "sri": void 0 };
+const serverManifest = { "entry": { "module": "/assets/entry.client-BxWr3UUB.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-DiSo3ncW.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/createLucideIcon-Da8AtwYQ.js"], "css": ["/assets/root-CDxTgHIL.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-_va8lzb9.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/search-B8EuDsim.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/plus-DekOuVBV.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/batch": { "id": "routes/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-C3m1nKsO.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/plus-DekOuVBV.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/send-CLyZgDQb.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-vMK4XIAM.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/search-B8EuDsim.js", "/assets/external-link-D2Duvbm5.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/search": { "id": "routes/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-DsqpW5Fb.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/search-B8EuDsim.js", "/assets/external-link-D2Duvbm5.js", "/assets/createLucideIcon-Da8AtwYQ.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.prospect": { "id": "routes/api.extension.prospect", "parentId": "root", "path": "api/extension/prospect", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.prospect-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "root", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-PwZR9MTq.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/external-link-D2Duvbm5.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/send-CLyZgDQb.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-c4b37dea.js", "version": "c4b37dea", "sri": void 0 };
 const assetsBuildDirectory = "build/client";
 const basename = "/";
 const future = { "unstable_optimizeDeps": false, "unstable_passThroughRequests": false, "unstable_subResourceIntegrity": false, "unstable_trailingSlashAwareDataRequests": false, "unstable_previewServerPrerendering": false, "v8_middleware": true, "v8_splitRouteModules": false, "v8_viteEnvironmentApi": false };
@@ -2508,13 +3737,21 @@ const routes = {
     caseSensitive: void 0,
     module: route4
   },
+  "routes/api.extension.prospect": {
+    id: "routes/api.extension.prospect",
+    parentId: "root",
+    path: "api/extension/prospect",
+    index: void 0,
+    caseSensitive: void 0,
+    module: route5
+  },
   "routes/prospect.$id": {
     id: "routes/prospect.$id",
     parentId: "root",
     path: "prospects/:id",
     index: void 0,
     caseSensitive: void 0,
-    module: route5
+    module: route6
   }
 };
 const allowedActionOrigins = false;

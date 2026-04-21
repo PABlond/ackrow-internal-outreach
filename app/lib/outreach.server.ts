@@ -87,6 +87,28 @@ export type Event = {
   name: string | null;
 };
 
+export type Reply = {
+  id: number;
+  prospect_id: number;
+  inbound_content: string;
+  suggested_response: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export function findProspectByProfileUrl(profileUrl: string) {
+  const row = getDb().prepare("SELECT id FROM prospects WHERE profile_url = ?").get(normalizeLinkedInUrl(profileUrl)) as { id: number } | undefined;
+  return row?.id || null;
+}
+
+export function setProspectOutreachPreference(id: number, mode: "with_note" | "no_note") {
+  const db = getDb();
+  const today = todayIso();
+  db.prepare("UPDATE prospects SET outreach_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(mode, id);
+  addEvent(id, mode === "no_note" ? "no_note_mode_selected" : "with_note_mode_selected", `Extension selected ${mode === "no_note" ? "no-note" : "with-note"} outreach mode.`, today);
+}
+
 export function getProspectDetail(id: number) {
   const db = getDb();
   const prospect = db.prepare(`
@@ -130,7 +152,14 @@ export function getProspectDetail(id: number) {
     ORDER BY e.happened_at DESC, e.id DESC
   `).all(id) as Event[];
 
-  return { prospect: withDerivedMessages(prospect), tasks, events, today: todayIso() };
+  const replies = db.prepare(`
+    SELECT *
+    FROM replies
+    WHERE prospect_id = ?
+    ORDER BY created_at DESC, id DESC
+  `).all(id) as Reply[];
+
+  return { prospect: withDerivedMessages(prospect), tasks, events, replies, today: todayIso() };
 }
 
 export function getDashboard() {
@@ -159,7 +188,10 @@ export function getDashboard() {
         WHEN 'connection_sent' THEN 2
         WHEN 'to_contact' THEN 3
         WHEN 'report_sent' THEN 4
+        WHEN 'conversation_active' THEN 4
+        WHEN 'reply_sent' THEN 4
         WHEN 'followup_due' THEN 5
+        WHEN 'archived' THEN 8
         WHEN 'saved_for_later' THEN 6
         WHEN 'skipped' THEN 7
         ELSE 8
@@ -201,6 +233,10 @@ export function getDashboard() {
       followupsDue: tasks.filter(
         (item) => item.status === "open" && item.type === "send_followup" && item.due_date && item.due_date <= today,
       ),
+      followupsScheduled: tasks.filter(
+        (item) => item.status === "open" && item.type === "send_followup" && item.due_date && item.due_date > today,
+      ),
+      conversationsActive: prospects.filter((item) => item.status === "conversation_active"),
       pendingConnections: prospects.filter((item) => item.status === "connection_sent"),
       doneToday: events.filter((item) => String(item.happened_at).slice(0, 10) === today),
     },
@@ -211,7 +247,7 @@ export async function runProspectAction(formData: FormData) {
   const id = Number(formData.get("prospectId"));
   const intent = String(formData.get("intent") || "");
   const db = getDb();
-  const prospect = db.prepare("SELECT * FROM prospects WHERE id = ?").get(id) as { name: string } | undefined;
+  const prospect = db.prepare("SELECT * FROM prospects WHERE id = ?").get(id) as Pick<Prospect, "name" | "position" | "about" | "recommended_template"> | undefined;
 
   if (!id || !prospect) {
     throw new Error("Unknown prospect");
@@ -236,7 +272,46 @@ export async function runProspectAction(formData: FormData) {
 
   db.exec("BEGIN");
   try {
-    if (intent === "markAccepted") {
+    if (intent === "deleteProspect") {
+      completeAllOpenTasks(id);
+      db.prepare("DELETE FROM prospects WHERE id = ?").run(id);
+    } else if (intent === "addProspectReply") {
+      const inboundContent = String(formData.get("inboundContent") || "").trim();
+      const suggestedResponse = String(formData.get("suggestedResponse") || "").trim() || replyFallback(prospect.name, inboundContent);
+      if (!inboundContent) throw new Error("Reply content is required");
+      db.prepare("INSERT INTO replies (prospect_id, inbound_content, suggested_response) VALUES (?, ?, ?)").run(id, inboundContent, suggestedResponse);
+      db.prepare("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      completeOpenTask(id, "send_followup");
+      addEvent(id, "reply_received", "Prospect replied. Follow-up task closed.", today);
+    } else if (intent === "updateReplyResponse") {
+      const replyId = Number(formData.get("replyId"));
+      const suggestedResponse = String(formData.get("suggestedResponse") || "").trim();
+      if (!replyId) throw new Error("Reply id is required");
+      if (!suggestedResponse) throw new Error("Suggested response is required");
+      db.prepare("UPDATE replies SET suggested_response = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?").run(suggestedResponse, replyId, id);
+      addEvent(id, "reply_response_updated", "Suggested response edited.", today);
+    } else if (intent === "markReplySent") {
+      const replyId = Number(formData.get("replyId"));
+      if (!replyId) throw new Error("Reply id is required");
+      db.prepare("UPDATE replies SET sent_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?").run(today, replyId, id);
+      completeOpenTask(id, "send_followup");
+      db.prepare("UPDATE prospects SET status = 'reply_sent', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      addEvent(id, "reply_sent", "Reply sent to prospect.", today);
+    } else if (intent === "archiveProspect") {
+      db.prepare("UPDATE prospects SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      completeAllOpenTasks(id);
+      addEvent(id, "archived", "Prospect manually archived.", today);
+    } else if (intent === "reopenConversation") {
+      db.prepare("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      addEvent(id, "conversation_reopened", "Conversation reopened.", today);
+    } else if (intent === "updateMessage") {
+      const type = String(formData.get("messageType") || "").trim();
+      const content = String(formData.get("messageContent") || "").trim();
+      if (!["connection", "report", "report_no_note", "followup"].includes(type)) throw new Error("Unknown message type");
+      if (!content) throw new Error("Message content is required");
+      upsertGeneratedMessage(id, type, content, type === "followup" ? null : null);
+      addEvent(id, "message_updated", `${type} message edited.`, today);
+    } else if (intent === "markAccepted") {
       db.prepare("UPDATE prospects SET status = 'accepted', accepted_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
       completeOpenTask(id, "watch_acceptance");
       createOpenTask(id, "send_report", `Send first message to ${prospect.name}`, today);
@@ -277,6 +352,20 @@ export async function runProspectAction(formData: FormData) {
       if (!sharedUrl) throw new Error("Brief URL is required");
       db.prepare("UPDATE briefs SET shared_url = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ?").run(sharedUrl, id);
       addEvent(id, "brief_url_added", `Brief URL added: ${sharedUrl}`, today);
+    } else if (intent === "updateBriefStrategy") {
+      const topic = trimWords(String(formData.get("briefTopic") || ""), 3);
+      const preparationNotes = String(formData.get("briefPreparation") || "").trim();
+      if (!topic) throw new Error("Brief topic is required");
+      db.prepare(`
+        INSERT INTO briefs (prospect_id, topic, preparation_notes)
+        VALUES (?, ?, ?)
+        ON CONFLICT(prospect_id) DO UPDATE SET
+          topic = excluded.topic,
+          preparation_notes = excluded.preparation_notes,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(id, topic, preparationNotes);
+      upsertGeneratedMessage(id, "report_no_note", noNoteReportFallback(prospect.name, topic, prospect.position, prospect.about, prospect.recommended_template), null);
+      addEvent(id, "brief_strategy_updated", `Brief topic updated to ${topic}.`, today);
     } else if (intent === "markReportSent") {
       const followupDate = addDaysIso(today, 5);
       db.prepare("UPDATE prospects SET status = 'report_sent', report_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
@@ -310,6 +399,18 @@ export async function runProspectAction(formData: FormData) {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+function replyFallback(name: string, inboundContent: string) {
+  const first = firstName(name);
+  const lower = inboundContent.toLowerCase();
+  if (/\b(thanks|thank you|interesting|useful|helpful)\b/.test(lower)) {
+    return `Thanks ${first}, really appreciate you taking a look.\n\nIf useful, I can keep refining this around the kinds of narrative signals that matter most for your work.`;
+  }
+  if (/\b(not relevant|not useful|unclear|don't|do not)\b/.test(lower)) {
+    return `Thanks ${first}, that's helpful to know.\n\nWas the issue the topic choice, the format, or the type of signal surfaced? That would help me calibrate the next version.`;
+  }
+  return `Thanks ${first}, really appreciate the reply.\n\nWhat would make this more useful for the kind of policy or communications work you do?`;
 }
 
 export function importAnalyzedProspects(items: AnalyzedProspect[]) {
@@ -403,6 +504,10 @@ export function importAnalyzedProspects(items: AnalyzedProspect[]) {
   }
 }
 
+function normalizeLinkedInUrl(value: string) {
+  return value.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
+}
+
 function getDb() {
   if (!database) {
     fs.mkdirSync(dataDir, { recursive: true });
@@ -494,19 +599,28 @@ function addDaysIso(dateIso: string, days: number) {
 }
 
 function withDerivedMessages(prospect: Prospect): Prospect {
+  const noNoteFallback = noNoteReportFallback(
+    prospect.name,
+    prospect.brief_topic,
+    prospect.position,
+    prospect.about,
+    prospect.recommended_template,
+  );
   return {
     ...prospect,
     outreach_mode: prospect.outreach_mode || "with_note",
     connection_note_sent: prospect.connection_note_sent || 0,
     post_acceptance_message:
       prospect.outreach_mode === "no_note"
-        ? prospect.no_note_report_message || rewriteReportForNoNote(prospect.report_message, prospect.name, prospect.brief_topic)
+        ? prospect.no_note_report_message
+          ? sanitizeNoNoteMessage(prospect.no_note_report_message, noNoteFallback)
+          : rewriteReportForNoNote(prospect.report_message, prospect.name, prospect.brief_topic, prospect.position, prospect.about, prospect.recommended_template)
         : prospect.report_message,
   };
 }
 
-function rewriteReportForNoNote(content: string | null, name: string, topic: string | null) {
-  const fallback = noNoteReportFallback(name, topic);
+function rewriteReportForNoNote(content: string | null, name: string, topic: string | null, position?: string | null, about?: string | null, template?: string | null) {
+  const fallback = noNoteReportFallback(name, topic, position, about, template);
   if (!content) return fallback;
 
   const rewritten = content
@@ -525,16 +639,28 @@ function rewriteReportForNoNote(content: string | null, name: string, topic: str
   return rewritten === content ? fallback : rewritten;
 }
 
-function noNoteReportFallback(name: string, topic: string | null) {
+function noNoteReportFallback(name: string, topic: string | null, position?: string | null, about?: string | null, template?: string | null) {
   const firstName = name.split(/\s+/)[0] || name;
   const briefTopic = topic || "your policy area";
+  const context = prospectContext(position, about, template);
   return `Hi ${firstName},
 
-Thanks for connecting. I prepared a short brief on ${briefTopic}: what public discourse is saying over the last 24 hours, outside media coverage.
+Thanks for connecting. I'm building Tempolis, a tool for public affairs narrative briefs, and I prepared a short brief on ${briefTopic} because it seems close to your work on ${context}.
 
 [shared link]
 
-I'm testing this with public affairs and policy profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`;
+If the angle feels useful, or if the signal is off for your workflow, your feedback would be very helpful.`;
+}
+
+function prospectContext(position?: string | null, about?: string | null, template?: string | null) {
+  const text = `${position || ""} ${about || ""} ${template || ""}`.toLowerCase();
+  if (/\b(ai|artificial intelligence|digital|tech|technology|platform|data|privacy|gdpr)\b/.test(text)) return "tech policy and regulation";
+  if (/\b(energy|climate|sustainability|power|grid)\b/.test(text)) return "energy and policy strategy";
+  if (/\b(health|pharma|medical|biotech)\b/.test(text)) return "health policy and public affairs";
+  if (/\b(finance|bank|fintech|payments|competition)\b/.test(text)) return "regulated markets and public affairs";
+  if (/\b(communications|comms|media|narrative|reputation)\b/.test(text)) return "strategic communications";
+  if (/\b(government affairs|public affairs|policy|regulatory|eu affairs|brussels)\b/.test(text)) return "public affairs and policy";
+  return "policy and public affairs";
 }
 
 async function generateNoNoteRewrite(prospectId: number): Promise<NoNoteRewrite> {
@@ -598,9 +724,15 @@ TASK
 - Write in English.
 - Adapt the first post-acceptance message so it does not rely on a previous promise.
 - The first message must naturally acknowledge the new connection and introduce the brief.
+- Make the first message feel written for this exact person, not a reusable template.
+- Use the prospect's role, organization context, about section, rationale, recommendedTemplate and briefTopic to choose one concrete angle.
+- Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format. Do not make this a product pitch.
+- Explain why this brief is relevant to their world in one specific phrase.
+- Ask for feedback on the angle, signal quality, or format. Do not ask for "thoughts" generically.
 - It must include [shared link] on its own line.
 - It must be 5 lines max.
 - It must not say "as promised", "the brief I mentioned", "as I mentioned", or imply that a note was sent.
+- Avoid generic filler: "key topics", "professionals like yourself", "might be of interest", "any initial thoughts", "greatly appreciated".
 - Rewrite the follow-up for 5 days later. It should still be gentle and should not refer to a promised brief.
 
 OUTPUT JSON SHAPE
@@ -642,7 +774,7 @@ ${brand.slice(0, 12000)}
 
 function normalizeNoNoteRewrite(value: unknown, prospect: Prospect): NoNoteRewrite {
   const input = value as Partial<NoNoteRewrite>;
-  const fallbackReport = noNoteReportFallback(prospect.name, prospect.brief_topic);
+  const fallbackReport = noNoteReportFallback(prospect.name, prospect.brief_topic, prospect.position, prospect.about, prospect.recommended_template);
   const fallbackFollowup = `Hi ${firstName(prospect.name)}, following up in case the brief slipped through. No worries if this isn't the right timing.`;
   return {
     noNoteReportMessage: sanitizeNoNoteMessage(String(input.noNoteReportMessage || ""), fallbackReport),
@@ -654,6 +786,9 @@ function sanitizeNoNoteMessage(value: string, fallback: string) {
   const cleanValue = value.trim();
   if (!cleanValue) return fallback;
   if (/\b(as promised|brief i mentioned|brief i promised|as i mentioned|comme promis|brief promis)\b/i.test(cleanValue)) {
+    return fallback;
+  }
+  if (/\b(key topics|professionals like yourself|might be of interest|any initial thoughts|greatly appreciated)\b/i.test(cleanValue)) {
     return fallback;
   }
   return cleanValue;
@@ -704,6 +839,7 @@ function normalizeAnalyzedProspect(item: AnalyzedProspect): AnalyzedProspect {
   const topic = trimWords(String(item.briefTopic || ""), 3);
   const name = String(item.name || "").trim();
   const reportMessage = String(item.reportMessage || "").trim();
+  const noNoteFallback = rewriteReportForNoNote(reportMessage, name, topic, item.position, item.about, item.recommendedTemplate);
   return {
     name,
     position: String(item.position || "").trim(),
@@ -718,7 +854,7 @@ function normalizeAnalyzedProspect(item: AnalyzedProspect): AnalyzedProspect {
     recommendedTemplate: String(item.recommendedTemplate || "").trim(),
     connectionMessage: String(item.connectionMessage || "").trim().slice(0, 300),
     reportMessage,
-    noNoteReportMessage: String(item.noNoteReportMessage || "").trim() || rewriteReportForNoNote(reportMessage, name, topic),
+    noNoteReportMessage: sanitizeNoNoteMessage(String(item.noNoteReportMessage || ""), noNoteFallback),
     followupMessage: String(item.followupMessage || "").trim(),
   };
 }

@@ -21,7 +21,7 @@ export async function action({ request }: Route.ActionArgs) {
 
 export default function Home() {
   const data = useLoaderData<typeof loader>();
-  const activeProspects = data.prospects.filter((prospect) => !["saved_for_later", "skipped", "archived_declined"].includes(prospect.status));
+  const activeProspects = data.prospects.filter((prospect) => !["saved_for_later", "skipped", "archived_declined", "archived"].includes(prospect.status));
 
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-8 text-stone-950 sm:px-6 lg:px-8">
@@ -67,7 +67,7 @@ export default function Home() {
           <Metric label="Prospects" value={data.prospects.length} />
           <Metric label="Pending connections" value={data.sections.pendingConnections.length} />
           <Metric label="Reports to send" value={data.sections.acceptedReport.length} />
-          <Metric label="Follow-ups due" value={data.sections.followupsDue.length} />
+          <Metric label="Active conversations" value={data.sections.conversationsActive.length} />
         </section>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -92,6 +92,15 @@ export default function Home() {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
                     return prospect ? <DashboardTaskLink prospect={prospect} detail={`Follow-up due ${task.due_date || ""}`} /> : null;
                   }}
+                </TodayPanel>
+                <TodayPanel title="Follow-ups scheduled" items={data.sections.followupsScheduled}>
+                  {(task) => {
+                    const prospect = data.prospects.find((item) => item.id === task.prospect_id);
+                    return prospect ? <DashboardTaskLink prospect={prospect} detail={`Follow-up scheduled ${task.due_date || ""}`} /> : null;
+                  }}
+                </TodayPanel>
+                <TodayPanel title="Active conversations" items={data.sections.conversationsActive}>
+                  {(prospect) => <DashboardTaskLink prospect={prospect} detail="Prospect replied, conversation in progress" />}
                 </TodayPanel>
                 <TodayPanel title="Pending connections" items={data.sections.pendingConnections}>
                   {(prospect) => <DashboardTaskLink prospect={prospect} detail={`${outreachModeLabel(prospect)} · sent ${prospect.connection_sent_date || "today"} · watch acceptance`} />}
@@ -184,8 +193,10 @@ function nextActionLabel(prospect: Prospect) {
   if (prospect.status === "connection_sent") return `${outreachModeLabel(prospect)} · watch acceptance`;
   if (prospect.status === "accepted") return "Send first message";
   if (prospect.status === "report_sent") return "Wait for follow-up";
+  if (prospect.status === "conversation_active") return "Conversation in progress";
+  if (prospect.status === "reply_sent") return "Response sent";
   if (prospect.status === "followup_due") return "Send follow-up";
-  if (prospect.status === "archived_declined") return "Archived";
+  if (prospect.status === "archived_declined" || prospect.status === "archived") return "Archived";
   return "Review";
 }
 
@@ -208,11 +219,15 @@ function SectionTitle({ title, detail }: { title: string; detail: string }) {
 }
 
 function TodayPanel<T>({ title, items, children }: { title: string; items: T[]; children: (item: T) => React.ReactNode }) {
+  const defaultOpen = items.length > 0;
   return (
-    <div className="rounded-lg border border-stone-300 bg-white p-4">
-      <h3 className="font-semibold">{title}</h3>
+    <details className="rounded-lg border border-stone-300 bg-white p-4" open={defaultOpen}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+        <h3 className="font-semibold">{title}</h3>
+        <Badge tone={items.length ? "blue" : "green"}>{items.length}</Badge>
+      </summary>
       <div className="mt-3 grid gap-2">{items.length ? items.map((item, index) => <div key={index}>{children(item)}</div>) : <EmptyState />}</div>
-    </div>
+    </details>
   );
 }
 

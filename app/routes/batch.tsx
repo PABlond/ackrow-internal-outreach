@@ -31,9 +31,9 @@ export async function action({ request }: Route.ActionArgs): Promise<ActionData>
 export default function Batch() {
   const actionData = useActionData<typeof action>();
   const [rows, setRows] = useState([
-    { name: "", position: "", profileUrl: "", about: "" },
-    { name: "", position: "", profileUrl: "", about: "" },
-    { name: "", position: "", profileUrl: "", about: "" },
+    { name: "", position: "", profileUrl: "", about: "", signals: "", briefDirection: "" },
+    { name: "", position: "", profileUrl: "", about: "", signals: "", briefDirection: "" },
+    { name: "", position: "", profileUrl: "", about: "", signals: "", briefDirection: "" },
   ]);
   const tablePayload = toTsv(rows);
 
@@ -67,7 +67,7 @@ export default function Batch() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setRows((current) => [...current, { name: "", position: "", profileUrl: "", about: "" }])}
+                  onClick={() => setRows((current) => [...current, { name: "", position: "", profileUrl: "", about: "", signals: "", briefDirection: "" }])}
                   className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 font-medium hover:border-teal-700"
                 >
                   <Plus size={16} />
@@ -76,13 +76,15 @@ export default function Batch() {
               </div>
 
               <div className="mt-4 overflow-x-auto rounded-lg border border-stone-300">
-                <table className="min-w-[1050px] w-full border-collapse bg-white text-sm">
+                <table className="min-w-[1480px] w-full border-collapse bg-white text-sm">
                   <thead className="bg-stone-50 text-left text-xs font-bold uppercase text-stone-500">
                     <tr>
                       <th className="w-[170px] border-b border-stone-300 px-3 py-2">Name</th>
                       <th className="w-[260px] border-b border-stone-300 px-3 py-2">Position</th>
                       <th className="w-[260px] border-b border-stone-300 px-3 py-2">Profile URL</th>
-                      <th className="border-b border-stone-300 px-3 py-2">About</th>
+                      <th className="w-[300px] border-b border-stone-300 px-3 py-2">About</th>
+                      <th className="w-[300px] border-b border-stone-300 px-3 py-2">Signals / posts</th>
+                      <th className="w-[190px] border-b border-stone-300 px-3 py-2">Brief direction</th>
                       <th className="w-[56px] border-b border-stone-300 px-3 py-2"></th>
                     </tr>
                   </thead>
@@ -106,6 +108,18 @@ export default function Batch() {
                             placeholder="Short profile summary, LinkedIn about, sector, topics..."
                             className="min-h-20 w-full resize-y rounded-md border border-stone-300 bg-stone-50 px-3 py-2 outline-none focus:border-teal-700"
                           />
+                        </td>
+                        <td className="border-b border-stone-200 p-2">
+                          <textarea
+                            value={row.signals}
+                            onChange={(event) => updateRow(index, "signals", event.target.value)}
+                            rows={2}
+                            placeholder="Recent posts, experience details, client context, recurring topics..."
+                            className="min-h-20 w-full resize-y rounded-md border border-stone-300 bg-stone-50 px-3 py-2 outline-none focus:border-teal-700"
+                          />
+                        </td>
+                        <td className="border-b border-stone-200 p-2">
+                          <CellInput value={row.briefDirection} placeholder="AI Act, EU competitiveness..." onChange={(value) => updateRow(index, "briefDirection", value)} />
                         </td>
                         <td className="border-b border-stone-200 p-2">
                           <button
@@ -169,9 +183,9 @@ function CellInput({ value, placeholder, onChange }: { value: string; placeholde
   );
 }
 
-function toTsv(rows: Array<{ name: string; position: string; profileUrl: string; about: string }>) {
-  const header = ["Name", "Position", "Profile URL", "About"];
-  const body = rows.filter(isFilledRow).map((row) => [row.name, row.position, row.profileUrl, row.about].map(cleanCell).join("\t"));
+function toTsv(rows: Array<{ name: string; position: string; profileUrl: string; about: string; signals: string; briefDirection: string }>) {
+  const header = ["Name", "Position", "Profile URL", "About", "Signals", "Brief direction"];
+  const body = rows.filter(isFilledRow).map((row) => [row.name, row.position, row.profileUrl, row.about, row.signals, row.briefDirection].map(cleanCell).join("\t"));
   return [header.join("\t"), ...body].join("\n");
 }
 
@@ -179,8 +193,8 @@ function cleanCell(value: string) {
   return value.replace(/\t/g, " ").replace(/\r?\n/g, " ").trim();
 }
 
-function isFilledRow(row: { name: string; position: string; profileUrl: string; about: string }) {
-  return Boolean(row.name.trim() || row.position.trim() || row.profileUrl.trim() || row.about.trim());
+function isFilledRow(row: { name: string; position: string; profileUrl: string; about: string; signals: string; briefDirection: string }) {
+  return Boolean(row.name.trim() || row.position.trim() || row.profileUrl.trim() || row.about.trim() || row.signals.trim() || row.briefDirection.trim());
 }
 
 function Results({ analysis }: { analysis: BatchAnalysis }) {
