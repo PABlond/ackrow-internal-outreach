@@ -1,5 +1,5 @@
 import { Form, Link, redirect, useLoaderData } from "react-router";
-import { Archive, ArrowLeft, CalendarCheck, Check, Clipboard, ExternalLink, LinkIcon, Save, Send, SkipForward, UserCheck } from "lucide-react";
+import { Archive, ArrowLeft, CalendarCheck, Check, Clipboard, ExternalLink, LinkIcon, RefreshCw, Save, Send, SkipForward, UserCheck } from "lucide-react";
 
 import type { Route } from "./+types/prospect.$id";
 import { getProspectDetail, runProspectAction, type Prospect, type Task } from "~/lib/outreach.server";
@@ -20,7 +20,7 @@ export function loader({ params }: Route.LoaderArgs) {
 
 export async function action({ request, params }: Route.ActionArgs) {
   const formData = await request.formData();
-  runProspectAction(formData);
+  await runProspectAction(formData);
   return redirect(`/prospects/${params.id}`);
 }
 
@@ -49,6 +49,7 @@ export default function ProspectDetail() {
           <div className="flex flex-wrap gap-2">
             <Badge>{prospect.priority_tag}</Badge>
             <Badge>Wave {prospect.wave || "-"}</Badge>
+            <Badge tone={prospect.outreach_mode === "no_note" ? "blue" : "green"}>{outreachModeLabel(prospect)}</Badge>
             <Badge tone="blue">{prospect.status}</Badge>
           </div>
         </header>
@@ -59,6 +60,24 @@ export default function ProspectDetail() {
               <SectionTitle title="Actions in progress" detail="Do these from top to bottom." />
               <div className="mt-4 grid gap-3">
                 {openTasks.length ? openTasks.map((task) => <OpenTask key={task.id} task={task} prospect={prospect} today={today} />) : <EmptyState />}
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-stone-300 bg-white p-5">
+              <SectionTitle title="Outreach mode" detail="Switch the copy strategy before sending." />
+              <div className="mt-4 grid gap-3 rounded-lg border border-stone-200 bg-stone-50 p-4">
+                <div>
+                  <p className="font-semibold">{outreachModeLabel(prospect)}</p>
+                  <p className="mt-1 text-sm text-stone-600">
+                    {prospect.outreach_mode === "no_note"
+                      ? "The request goes out without a custom note. The first real message is generated for after acceptance."
+                      : "The current sequence assumes a custom connection note that tees up the brief."}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <ActionButton intent="generateNoNoteMode" prospectId={prospect.id} label="Generate no-note mode" icon={<RefreshCw size={16} />} primary={prospect.outreach_mode !== "no_note"} />
+                  <ActionButton intent="switchToWithNoteMode" prospectId={prospect.id} label="Use with-note mode" icon={<Send size={16} />} primary={prospect.outreach_mode === "no_note"} />
+                </div>
               </div>
             </section>
 
@@ -97,8 +116,8 @@ export default function ProspectDetail() {
             <section className="rounded-lg border border-stone-300 bg-white p-5">
               <SectionTitle title="Messages" detail="Copy exact LinkedIn copy." />
               <div className="mt-4 grid gap-3">
-                <MessageBlock title="Connection request" content={prospect.connection_message} />
-                <MessageBlock title="After acceptance" content={prospect.report_message} />
+                <MessageBlock title="Connection note" content={prospect.connection_message} />
+                <MessageBlock title={prospect.outreach_mode === "no_note" ? "First message after acceptance" : "After acceptance"} content={prospect.post_acceptance_message} />
                 <MessageBlock title="Follow-up J+5" content={prospect.followup_message} />
               </div>
             </section>
@@ -163,8 +182,9 @@ function taskActions(task: Task, prospect: Prospect) {
   if (task.type === "send_connection") {
     return (
       <>
-        <CopyButton label="Copy request" value={prospect.connection_message || ""} />
-        <ActionButton intent="markConnectionSent" prospectId={prospect.id} label="Mark sent" icon={<Send size={16} />} primary />
+        <CopyButton label="Copy note" value={prospect.connection_message || ""} />
+        <ActionButton intent="markConnectionSentWithNote" prospectId={prospect.id} label="Sent with note" icon={<Send size={16} />} primary />
+        <ActionButton intent="markConnectionSentWithoutNote" prospectId={prospect.id} label="Sent without note" icon={<UserCheck size={16} />} />
       </>
     );
   }
@@ -179,8 +199,8 @@ function taskActions(task: Task, prospect: Prospect) {
   if (task.type === "send_report") {
     return (
       <>
-        <CopyButton label="Copy report" value={prospect.report_message || ""} />
-        <ActionButton intent="markReportSent" prospectId={prospect.id} label="Mark report sent" icon={<Check size={16} />} primary />
+        <CopyButton label="Copy message" value={prospect.post_acceptance_message || ""} />
+        <ActionButton intent="markReportSent" prospectId={prospect.id} label="Mark sent" icon={<Check size={16} />} primary />
       </>
     );
   }
@@ -245,6 +265,11 @@ function MessageBlock({ title, content }: { title: string; content: string | nul
 function Badge({ children, tone = "green" }: { children: React.ReactNode; tone?: "green" | "blue" }) {
   const className = tone === "blue" ? "bg-blue-50 text-blue-800" : "bg-teal-50 text-teal-800";
   return <span className={`inline-flex min-h-6 items-center rounded-full px-2.5 text-xs font-semibold ${className}`}>{children}</span>;
+}
+
+function outreachModeLabel(prospect: Prospect) {
+  if (prospect.status === "to_contact") return "note optional";
+  return prospect.outreach_mode === "no_note" ? "no note" : "with note";
 }
 
 function ActionButton({

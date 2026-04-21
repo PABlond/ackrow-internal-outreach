@@ -108,11 +108,14 @@ TASK
 - Assign a wave: 1 for immediate learning outreach, 2 for calibration, 3 for premium/saved prospects, null for SKIP.
 - Pick only the best first-wave LEARN profiles for contactToday=true.
 - Generate exact LinkedIn connection messages for contactToday=true profiles.
-- Write all outreach messages in English by default: connectionMessage, reportMessage, and followupMessage.
+- Write all outreach messages in English by default: connectionMessage, reportMessage, noNoteReportMessage, and followupMessage.
 - Do not use French greetings or French message templates unless the input explicitly requests French. For now, assume English.
 - Use brief topics of 1 to 3 words only.
 - Respect the outreach rule: no product pitch, no demo/call request, short connection note under 300 characters.
-- Generate the first post-acceptance report message and the J+5 follow-up.
+- Generate two post-acceptance variants:
+  - reportMessage assumes a custom connection note was sent and may refer to the promised brief.
+  - noNoteReportMessage assumes no custom connection note was sent; it must open naturally with "Thanks for connecting" or equivalent and must not say "as promised" or "the brief I mentioned".
+- Generate the J+5 follow-up.
 - Do not invent facts beyond the profile fields.
 
 OUTPUT JSON SHAPE
@@ -139,6 +142,7 @@ OUTPUT JSON SHAPE
       "recommendedTemplate": string,
       "connectionMessage": string,
       "reportMessage": string,
+      "noNoteReportMessage": string,
       "followupMessage": string
     }
   ]
@@ -260,6 +264,16 @@ As promised, the brief on ${briefTopic || "your policy area"}: what public disco
 
 I'm testing it with public affairs profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`,
   );
+  const noNoteReportMessage = noPriorNoteCopy(enforceEnglish(
+    clean(item.noNoteReportMessage),
+    `Hi ${firstName},
+
+Thanks for connecting. I prepared a short brief on ${briefTopic || "your policy area"}: what public discourse is saying over the last 24 hours, outside media coverage.
+
+[shared link]
+
+I'm testing this with public affairs and policy profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`,
+  ), firstName, briefTopic);
   const followupMessage = enforceEnglish(
     clean(item.followupMessage),
     `Hi ${firstName}, following up in case the brief slipped through. No worries if this isn't the right timing.`,
@@ -279,6 +293,7 @@ I'm testing it with public affairs profiles before a proper launch. If the angle
     recommendedTemplate: clean(item.recommendedTemplate),
     connectionMessage: connectionMessage.slice(0, 300),
     reportMessage,
+    noNoteReportMessage,
     followupMessage,
   };
 }
@@ -298,6 +313,17 @@ function enforceEnglish(value: string, fallback: string) {
   ];
   const lower = value.toLowerCase();
   return frenchMarkers.some((marker) => lower.includes(marker)) ? fallback : value;
+}
+
+function noPriorNoteCopy(value: string, firstName: string, briefTopic: string) {
+  if (!/\b(as promised|brief i mentioned|brief i promised|comme promis|brief promis)\b/i.test(value)) return value;
+  return `Hi ${firstName},
+
+Thanks for connecting. I prepared a short brief on ${briefTopic || "your policy area"}: what public discourse is saying over the last 24 hours, outside media coverage.
+
+[shared link]
+
+I'm testing this with public affairs and policy profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`;
 }
 
 function normalizeHeader(value: string) {

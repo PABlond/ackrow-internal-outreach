@@ -249,8 +249,9 @@ function ActionCard({ prospect }: { prospect: BatchAnalysis["prospects"][number]
           LinkedIn
         </a>
       </div>
-      <Message title="Connection request" value={prospect.connectionMessage} />
-      <Message title="After acceptance" value={prospect.reportMessage} />
+      <Message title="Connection note" value={prospect.connectionMessage} />
+      <Message title="After acceptance, with note" value={prospect.reportMessage} />
+      <Message title="After acceptance, without note" value={prospect.noNoteReportMessage} />
       <Message title="Follow-up J+5" value={prospect.followupMessage} />
     </article>
   );

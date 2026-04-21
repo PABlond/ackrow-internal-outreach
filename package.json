@@ -10,6 +10,9 @@
     "typecheck": "react-router typegen && tsc",
     "check": "node scripts/check.js"
   },
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "dependencies": {
     "@react-router/node": "^7.14.1",
     "@react-router/serve": "^7.14.1",

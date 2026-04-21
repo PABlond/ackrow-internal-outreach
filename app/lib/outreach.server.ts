@@ -24,6 +24,8 @@ export type Prospect = {
   recommended_template: string | null;
   notes: string | null;
   status: string;
+  outreach_mode: "with_note" | "no_note";
+  connection_note_sent: number;
   connection_sent_date: string | null;
   accepted_date: string | null;
   report_sent_date: string | null;
@@ -33,8 +35,15 @@ export type Prospect = {
   shared_url: string | null;
   connection_message: string | null;
   report_message: string | null;
+  no_note_report_message: string | null;
+  post_acceptance_message: string | null;
   followup_message: string | null;
   followup_due_date: string | null;
+};
+
+type NoNoteRewrite = {
+  noNoteReportMessage: string;
+  followupMessage: string;
 };
 
 export type AnalyzedProspect = {
@@ -51,6 +60,7 @@ export type AnalyzedProspect = {
   recommendedTemplate: string;
   connectionMessage: string;
   reportMessage: string;
+  noNoteReportMessage: string;
   followupMessage: string;
 };
 
@@ -87,12 +97,14 @@ export function getProspectDetail(id: number) {
       b.shared_url,
       cm.content AS connection_message,
       rm.content AS report_message,
+      nrm.content AS no_note_report_message,
       fm.content AS followup_message,
       fm.due_date AS followup_due_date
     FROM prospects p
     LEFT JOIN briefs b ON b.prospect_id = p.id
     LEFT JOIN messages cm ON cm.prospect_id = p.id AND cm.type = 'connection'
     LEFT JOIN messages rm ON rm.prospect_id = p.id AND rm.type = 'report'
+    LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
     LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
     WHERE p.id = ?
   `).get(id) as Prospect | undefined;
@@ -118,13 +130,13 @@ export function getProspectDetail(id: number) {
     ORDER BY e.happened_at DESC, e.id DESC
   `).all(id) as Event[];
 
-  return { prospect, tasks, events, today: todayIso() };
+  return { prospect: withDerivedMessages(prospect), tasks, events, today: todayIso() };
 }
 
 export function getDashboard() {
   const db = getDb();
   const today = todayIso();
-  const prospects = db.prepare(`
+  const prospectRows = db.prepare(`
     SELECT
       p.*,
       b.topic AS brief_topic,
@@ -132,12 +144,14 @@ export function getDashboard() {
       b.shared_url,
       cm.content AS connection_message,
       rm.content AS report_message,
+      nrm.content AS no_note_report_message,
       fm.content AS followup_message,
       fm.due_date AS followup_due_date
     FROM prospects p
     LEFT JOIN briefs b ON b.prospect_id = p.id
     LEFT JOIN messages cm ON cm.prospect_id = p.id AND cm.type = 'connection'
     LEFT JOIN messages rm ON rm.prospect_id = p.id AND rm.type = 'report'
+    LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
     LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
     ORDER BY
       CASE p.status
@@ -153,6 +167,7 @@ export function getDashboard() {
       p.wave,
       p.name
   `).all() as Prospect[];
+  const prospects = prospectRows.map(withDerivedMessages);
 
   const tasks = db.prepare(`
     SELECT t.*, p.name, p.profile_url
@@ -192,7 +207,7 @@ export function getDashboard() {
   };
 }
 
-export function runProspectAction(formData: FormData) {
+export async function runProspectAction(formData: FormData) {
   const id = Number(formData.get("prospectId"));
   const intent = String(formData.get("intent") || "");
   const db = getDb();
@@ -203,23 +218,60 @@ export function runProspectAction(formData: FormData) {
   }
 
   const today = todayIso();
+  if (intent === "generateNoNoteMode") {
+    const rewrite = await generateNoNoteRewrite(id);
+    db.exec("BEGIN");
+    try {
+      db.prepare("UPDATE prospects SET outreach_mode = 'no_note', connection_note_sent = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      upsertGeneratedMessage(id, "report_no_note", rewrite.noNoteReportMessage, null);
+      upsertGeneratedMessage(id, "followup", rewrite.followupMessage, null);
+      addEvent(id, "no_note_mode_generated", "No-note outreach mode generated with AI.", today);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    return;
+  }
+
   db.exec("BEGIN");
   try {
     if (intent === "markAccepted") {
       db.prepare("UPDATE prospects SET status = 'accepted', accepted_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
       completeOpenTask(id, "watch_acceptance");
-      createOpenTask(id, "send_report", `Send report to ${prospect.name}`, today);
+      createOpenTask(id, "send_report", `Send first message to ${prospect.name}`, today);
       addEvent(id, "accepted", "LinkedIn connection accepted.", today);
     } else if (intent === "archiveDeclined") {
       db.prepare("UPDATE prospects SET status = 'archived_declined', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
       completeAllOpenTasks(id);
       addEvent(id, "archived_declined", "Connection request declined or ignored. Archived to avoid recontacting.", today);
-    } else if (intent === "markConnectionSent") {
-      db.prepare("UPDATE prospects SET status = 'connection_sent', connection_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
+    } else if (intent === "markConnectionSent" || intent === "markConnectionSentWithNote") {
+      db.prepare(`
+        UPDATE prospects
+        SET status = 'connection_sent',
+            outreach_mode = 'with_note',
+            connection_note_sent = 1,
+            connection_sent_date = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(today, id);
       db.prepare("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'connection'").run(today, id);
       completeOpenTask(id, "send_connection");
       createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
-      addEvent(id, "connection_sent", "Connection request sent.", today);
+      addEvent(id, "connection_sent", "Connection request sent with custom note.", today);
+    } else if (intent === "markConnectionSentWithoutNote") {
+      db.prepare(`
+        UPDATE prospects
+        SET status = 'connection_sent',
+            outreach_mode = 'no_note',
+            connection_note_sent = 0,
+            connection_sent_date = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(today, id);
+      completeOpenTask(id, "send_connection");
+      createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
+      addEvent(id, "connection_sent_without_note", "Connection request sent without custom note. First outreach message waits for acceptance.", today);
     } else if (intent === "addBriefUrl") {
       const sharedUrl = String(formData.get("sharedUrl") || "").trim();
       if (!sharedUrl) throw new Error("Brief URL is required");
@@ -246,6 +298,9 @@ export function runProspectAction(formData: FormData) {
       db.prepare("UPDATE prospects SET status = 'saved_for_later', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
       completeAllOpenTasks(id);
       addEvent(id, "saved_for_later", "Prospect saved for a later wave.", today);
+    } else if (intent === "switchToWithNoteMode") {
+      db.prepare("UPDATE prospects SET outreach_mode = 'with_note', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      addEvent(id, "with_note_mode_selected", "With-note outreach mode selected.", today);
     } else {
       throw new Error(`Unknown action ${intent}`);
     }
@@ -330,6 +385,9 @@ export function importAnalyzedProspects(items: AnalyzedProspect[]) {
       if (item.reportMessage) {
         upsertMessage.run(prospect.id, "report", item.reportMessage, null);
       }
+      if (item.noNoteReportMessage) {
+        upsertMessage.run(prospect.id, "report_no_note", item.noNoteReportMessage, null);
+      }
       if (item.followupMessage) {
         upsertMessage.run(prospect.id, "followup", item.followupMessage, null);
       }
@@ -404,6 +462,17 @@ function completeAllOpenTasks(prospectId: number) {
   `).run(todayIso(), prospectId);
 }
 
+function upsertGeneratedMessage(prospectId: number, type: string, content: string, dueDate: string | null) {
+  getDb().prepare(`
+    INSERT INTO messages (prospect_id, type, content, due_date, sent_date)
+    VALUES (?, ?, ?, ?, NULL)
+    ON CONFLICT(prospect_id, type) DO UPDATE SET
+      content = excluded.content,
+      due_date = excluded.due_date,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(prospectId, type, content, dueDate);
+}
+
 function addEvent(prospectId: number, type: string, note: string, happenedAt: string) {
   getDb().prepare("INSERT INTO events (prospect_id, type, note, happened_at) VALUES (?, ?, ?, ?)").run(prospectId, type, note, happenedAt);
 }
@@ -424,6 +493,206 @@ function addDaysIso(dateIso: string, days: number) {
   return date.toISOString().slice(0, 10);
 }
 
+function withDerivedMessages(prospect: Prospect): Prospect {
+  return {
+    ...prospect,
+    outreach_mode: prospect.outreach_mode || "with_note",
+    connection_note_sent: prospect.connection_note_sent || 0,
+    post_acceptance_message:
+      prospect.outreach_mode === "no_note"
+        ? prospect.no_note_report_message || rewriteReportForNoNote(prospect.report_message, prospect.name, prospect.brief_topic)
+        : prospect.report_message,
+  };
+}
+
+function rewriteReportForNoNote(content: string | null, name: string, topic: string | null) {
+  const fallback = noNoteReportFallback(name, topic);
+  if (!content) return fallback;
+
+  const rewritten = content
+    .replace(/As promised,\s*the brief on/i, "Thanks for connecting. I prepared a brief on")
+    .replace(/As promised,\s*the brief/i, "Thanks for connecting. I prepared a brief")
+    .replace(/The brief I mentioned,\s*on/i, "Thanks for connecting. I prepared a brief on")
+    .replace(/The brief I promised,\s*on/i, "Thanks for connecting. I prepared a brief on")
+    .replace(/As promised,\s*/i, "")
+    .replace(/The brief I mentioned,\s*/i, "I prepared a brief ")
+    .replace(/The brief I mentioned/i, "I prepared a brief")
+    .replace(/The brief I promised,\s*/i, "I prepared a brief ")
+    .replace(/The brief I promised/i, "I prepared a brief")
+    .replace(/Le brief promis\s*/i, "J'ai préparé un brief ")
+    .replace(/Comme promis,\s*/i, "");
+
+  return rewritten === content ? fallback : rewritten;
+}
+
+function noNoteReportFallback(name: string, topic: string | null) {
+  const firstName = name.split(/\s+/)[0] || name;
+  const briefTopic = topic || "your policy area";
+  return `Hi ${firstName},
+
+Thanks for connecting. I prepared a short brief on ${briefTopic}: what public discourse is saying over the last 24 hours, outside media coverage.
+
+[shared link]
+
+I'm testing this with public affairs and policy profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`;
+}
+
+async function generateNoNoteRewrite(prospectId: number): Promise<NoNoteRewrite> {
+  loadLocalEnv();
+  const detail = getProspectDetail(prospectId);
+  if (!detail) throw new Error("Prospect not found");
+
+  const { prospect } = detail;
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing OPENROUTER_API_KEY. Add it to .env or your shell env.");
+  }
+
+  const model = process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
+  const prompt = buildNoNoteRewritePrompt(prospect);
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:4377",
+      "X-Title": "Tempolis Outreach App",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a strict JSON-producing public affairs outreach copywriter. Return only valid JSON. Never include markdown.",
+        },
+        { role: "user", content: prompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const detailText = await response.text();
+    throw new Error(`OpenRouter request failed (${response.status}): ${detailText.slice(0, 600)}`);
+  }
+
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenRouter returned an empty response.");
+
+  return normalizeNoNoteRewrite(parseJson(content), prospect);
+}
+
+function buildNoNoteRewritePrompt(prospect: Prospect) {
+  const outreach = readDoc("outreach.md");
+  const brand = readDoc("brand.md");
+  return `
+Rewrite this Tempolis LinkedIn outreach sequence for NO-CUSTOM-NOTE mode.
+
+CONTEXT
+LinkedIn custom note quota is exhausted. The connection request will be sent without any note. The first actual outreach message is sent only after the person accepts the request.
+
+TASK
+- Keep the strategy soft: no product pitch, no demo request, no call request.
+- Write in English.
+- Adapt the first post-acceptance message so it does not rely on a previous promise.
+- The first message must naturally acknowledge the new connection and introduce the brief.
+- It must include [shared link] on its own line.
+- It must be 5 lines max.
+- It must not say "as promised", "the brief I mentioned", "as I mentioned", or imply that a note was sent.
+- Rewrite the follow-up for 5 days later. It should still be gentle and should not refer to a promised brief.
+
+OUTPUT JSON SHAPE
+{
+  "noNoteReportMessage": string,
+  "followupMessage": string
+}
+
+PROSPECT
+${JSON.stringify({
+  name: prospect.name,
+  position: prospect.position,
+  about: prospect.about,
+  profileUrl: prospect.profile_url,
+  priorityTag: prospect.priority_tag,
+  wave: prospect.wave,
+  rationale: prospect.rationale,
+  recommendedTemplate: prospect.recommended_template,
+  briefTopic: prospect.brief_topic,
+  briefPreparation: prospect.preparation_notes,
+  sharedUrl: prospect.shared_url || "[shared link]",
+}, null, 2)}
+
+CURRENT COPY GENERATED FOR WITH-NOTE MODE
+${JSON.stringify({
+  connectionNote: prospect.connection_message,
+  afterAcceptanceWithNote: prospect.report_message,
+  existingNoNoteMessage: prospect.no_note_report_message,
+  followup: prospect.followup_message,
+}, null, 2)}
+
+PLAYBOOK
+${outreach.slice(0, 18000)}
+
+BRAND
+${brand.slice(0, 12000)}
+`;
+}
+
+function normalizeNoNoteRewrite(value: unknown, prospect: Prospect): NoNoteRewrite {
+  const input = value as Partial<NoNoteRewrite>;
+  const fallbackReport = noNoteReportFallback(prospect.name, prospect.brief_topic);
+  const fallbackFollowup = `Hi ${firstName(prospect.name)}, following up in case the brief slipped through. No worries if this isn't the right timing.`;
+  return {
+    noNoteReportMessage: sanitizeNoNoteMessage(String(input.noNoteReportMessage || ""), fallbackReport),
+    followupMessage: sanitizeNoNoteMessage(String(input.followupMessage || ""), fallbackFollowup),
+  };
+}
+
+function sanitizeNoNoteMessage(value: string, fallback: string) {
+  const cleanValue = value.trim();
+  if (!cleanValue) return fallback;
+  if (/\b(as promised|brief i mentioned|brief i promised|as i mentioned|comme promis|brief promis)\b/i.test(cleanValue)) {
+    return fallback;
+  }
+  return cleanValue;
+}
+
+function firstName(name: string) {
+  return name.split(/\s+/)[0] || name;
+}
+
+function parseJson(content: string) {
+  const trimmed = content.trim();
+  const json = trimmed.startsWith("```") ? trimmed.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim() : trimmed;
+  return JSON.parse(json);
+}
+
+function loadLocalEnv() {
+  const envPath = path.join(rootDir, ".env");
+  if (!fs.existsSync(envPath)) return;
+
+  const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const separator = trimmed.indexOf("=");
+    if (separator === -1) continue;
+
+    const key = trimmed.slice(0, separator).trim();
+    const rawValue = trimmed.slice(separator + 1).trim();
+    if (!key || process.env[key] !== undefined) continue;
+
+    process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+  }
+}
+
+function readDoc(fileName: string) {
+  const docsDir = path.resolve(rootDir, "..", "tempolis", "front", "docs");
+  return fs.readFileSync(path.join(docsDir, fileName), "utf8");
+}
+
 function statusForImportedProspect(item: AnalyzedProspect) {
   if (item.priorityTag === "SKIP") return "skipped";
   if (item.priorityTag === "SAVE") return "saved_for_later";
@@ -433,8 +702,10 @@ function statusForImportedProspect(item: AnalyzedProspect) {
 function normalizeAnalyzedProspect(item: AnalyzedProspect): AnalyzedProspect {
   const tag = ["LEARN", "WARM", "SAVE", "SKIP"].includes(item.priorityTag) ? item.priorityTag : "SKIP";
   const topic = trimWords(String(item.briefTopic || ""), 3);
+  const name = String(item.name || "").trim();
+  const reportMessage = String(item.reportMessage || "").trim();
   return {
-    name: String(item.name || "").trim(),
+    name,
     position: String(item.position || "").trim(),
     profileUrl: String(item.profileUrl || "").trim(),
     about: String(item.about || "").trim(),
@@ -446,7 +717,8 @@ function normalizeAnalyzedProspect(item: AnalyzedProspect): AnalyzedProspect {
     briefPreparation: String(item.briefPreparation || "").trim(),
     recommendedTemplate: String(item.recommendedTemplate || "").trim(),
     connectionMessage: String(item.connectionMessage || "").trim().slice(0, 300),
-    reportMessage: String(item.reportMessage || "").trim(),
+    reportMessage,
+    noNoteReportMessage: String(item.noNoteReportMessage || "").trim() || rewriteReportForNoNote(reportMessage, name, topic),
     followupMessage: String(item.followupMessage || "").trim(),
   };
 }

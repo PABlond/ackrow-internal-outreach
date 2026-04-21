@@ -4,6 +4,12 @@ Local React Router outreach tracker backed by SQLite.
 
 ## Commands
 
+Use Node 22.13.0 or newer:
+
+```sh
+nvm use
+```
+
 ```sh
 npm run init
 npm run dev

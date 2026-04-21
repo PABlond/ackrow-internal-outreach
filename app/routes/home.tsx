@@ -15,7 +15,7 @@ export function loader() {
 
 export async function action({ request }: Route.ActionArgs) {
   const formData = await request.formData();
-  runProspectAction(formData);
+  await runProspectAction(formData);
   return redirect("/");
 }
 
@@ -78,7 +78,7 @@ export default function Home() {
                 <TodayPanel title="Connect today" items={data.sections.toConnect}>
                   {(task) => {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
-                    return prospect ? <DashboardTaskLink prospect={prospect} detail="Send LinkedIn connection request" /> : null;
+                    return prospect ? <DashboardTaskLink prospect={prospect} detail="Send LinkedIn request with note, or without note if capped" /> : null;
                   }}
                 </TodayPanel>
                 <TodayPanel title="Accepted, report to send" items={data.sections.acceptedReport}>
@@ -94,7 +94,7 @@ export default function Home() {
                   }}
                 </TodayPanel>
                 <TodayPanel title="Pending connections" items={data.sections.pendingConnections}>
-                  {(prospect) => <DashboardTaskLink prospect={prospect} detail={`Sent ${prospect.connection_sent_date || "today"} · watch acceptance`} />}
+                  {(prospect) => <DashboardTaskLink prospect={prospect} detail={`${outreachModeLabel(prospect)} · sent ${prospect.connection_sent_date || "today"} · watch acceptance`} />}
                 </TodayPanel>
               </div>
             </section>
@@ -138,6 +138,7 @@ function DashboardTaskLink({ prospect, detail }: { prospect: Prospect; detail: s
       <TaskIntro icon={<Clock size={18} />} title={prospect.name} detail={detail} />
       <div className="flex flex-wrap gap-2">
         <Badge>{prospect.priority_tag}</Badge>
+        <Badge tone={prospect.outreach_mode === "no_note" ? "blue" : "green"}>{outreachModeLabel(prospect)}</Badge>
         <Badge tone="blue">{prospect.status}</Badge>
       </div>
     </Link>
@@ -179,9 +180,9 @@ function ProspectsTable({ prospects }: { prospects: Prospect[] }) {
 }
 
 function nextActionLabel(prospect: Prospect) {
-  if (prospect.status === "to_contact" && prospect.contact_now) return "Send connection request";
-  if (prospect.status === "connection_sent") return "Watch acceptance or archive";
-  if (prospect.status === "accepted") return "Send report";
+  if (prospect.status === "to_contact" && prospect.contact_now) return "Send request with note or without note";
+  if (prospect.status === "connection_sent") return `${outreachModeLabel(prospect)} · watch acceptance`;
+  if (prospect.status === "accepted") return "Send first message";
   if (prospect.status === "report_sent") return "Wait for follow-up";
   if (prospect.status === "followup_due") return "Send follow-up";
   if (prospect.status === "archived_declined") return "Archived";
@@ -218,10 +219,10 @@ function TodayPanel<T>({ title, items, children }: { title: string; items: T[]; 
 function ReportTask({ prospect }: { prospect: Prospect }) {
   return (
     <div className="grid gap-3 rounded-lg border border-stone-200 bg-stone-50 p-3 md:grid-cols-[1fr_auto] md:items-center">
-      <TaskIntro icon={<Send size={18} />} title={prospect.name} detail={`${prospect.brief_topic || "No topic"} · report ready after acceptance`} />
+      <TaskIntro icon={<Send size={18} />} title={prospect.name} detail={`${prospect.brief_topic || "No topic"} · first message ready after acceptance`} />
       <div className="flex flex-wrap gap-2">
-        <CopyButton label="Copy report" value={prospect.report_message || ""} />
-        <ActionButton intent="markReportSent" prospectId={prospect.id} label="Mark report sent" icon={<Check size={16} />} primary />
+        <CopyButton label="Copy message" value={prospect.post_acceptance_message || ""} />
+        <ActionButton intent="markReportSent" prospectId={prospect.id} label="Mark sent" icon={<Check size={16} />} primary />
       </div>
     </div>
   );
@@ -230,10 +231,11 @@ function ReportTask({ prospect }: { prospect: Prospect }) {
 function ConnectTask({ prospect }: { prospect: Prospect }) {
   return (
     <div className="grid gap-3 rounded-lg border border-stone-200 bg-stone-50 p-3 md:grid-cols-[1fr_auto] md:items-center">
-      <TaskIntro icon={<Send size={18} />} title={prospect.name} detail={`${prospect.brief_topic || "No topic"} · send LinkedIn connection request`} />
+      <TaskIntro icon={<Send size={18} />} title={prospect.name} detail={`${prospect.brief_topic || "No topic"} · choose note or no-note request`} />
       <div className="flex flex-wrap gap-2">
-        <CopyButton label="Copy request" value={prospect.connection_message || ""} />
-        <ActionButton intent="markConnectionSent" prospectId={prospect.id} label="Mark sent" icon={<Check size={16} />} primary />
+        <CopyButton label="Copy note" value={prospect.connection_message || ""} />
+        <ActionButton intent="markConnectionSentWithNote" prospectId={prospect.id} label="Sent with note" icon={<Check size={16} />} primary />
+        <ActionButton intent="markConnectionSentWithoutNote" prospectId={prospect.id} label="Sent without note" icon={<UserCheck size={16} />} />
       </div>
     </div>
   );
@@ -278,7 +280,7 @@ function FollowupTask({ task, prospect, today }: { task: Task; prospect?: Prospe
 function PendingTask({ prospect }: { prospect: Prospect }) {
   return (
     <div className="grid gap-3 rounded-lg border border-stone-200 bg-stone-50 p-3 md:grid-cols-[1fr_auto] md:items-center">
-      <TaskIntro icon={<Clock size={18} />} title={prospect.name} detail={`Sent ${prospect.connection_sent_date || "today"} · watch acceptance`} />
+      <TaskIntro icon={<Clock size={18} />} title={prospect.name} detail={`${outreachModeLabel(prospect)} · sent ${prospect.connection_sent_date || "today"} · watch acceptance`} />
       <ActionButton intent="markAccepted" prospectId={prospect.id} label="Mark accepted" icon={<UserCheck size={16} />} primary />
     </div>
   );
@@ -299,6 +301,7 @@ function ProspectCard({ prospect }: { prospect: Prospect }) {
         <div className="flex flex-wrap gap-2">
           <Badge>{prospect.priority_tag}</Badge>
           <Badge>Wave {prospect.wave || "-"}</Badge>
+          <Badge tone={prospect.outreach_mode === "no_note" ? "blue" : "green"}>{outreachModeLabel(prospect)}</Badge>
           <Badge tone="blue">{prospect.status}</Badge>
         </div>
       </div>
@@ -309,17 +312,18 @@ function ProspectCard({ prospect }: { prospect: Prospect }) {
       </div>
 
       <div className="mt-4 grid gap-3">
-        <MessageBlock title="Connection message" content={prospect.connection_message} />
-        <MessageBlock title="Report message" content={prospect.report_message} />
+        <MessageBlock title="Connection note" content={prospect.connection_message} />
+        <MessageBlock title={prospect.outreach_mode === "no_note" ? "First message after acceptance" : "Report message"} content={prospect.post_acceptance_message} />
         <MessageBlock title="Follow-up" content={prospect.followup_message} />
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
         {prospect.status === "connection_sent" ? <ActionButton intent="markAccepted" prospectId={prospect.id} label="Mark accepted" icon={<UserCheck size={16} />} primary /> : null}
-        {prospect.status === "to_contact" && prospect.contact_now ? <ActionButton intent="markConnectionSent" prospectId={prospect.id} label="Mark connection sent" icon={<Send size={16} />} primary /> : null}
-        {prospect.connection_message ? <CopyButton label="Copy request" value={prospect.connection_message} /> : null}
-        {prospect.report_message ? <CopyButton label="Copy report" value={prospect.report_message} /> : null}
-        {prospect.status === "accepted" ? <ActionButton intent="markReportSent" prospectId={prospect.id} label="Mark report sent" icon={<Check size={16} />} primary /> : null}
+        {prospect.status === "to_contact" && prospect.contact_now ? <ActionButton intent="markConnectionSentWithNote" prospectId={prospect.id} label="Sent with note" icon={<Send size={16} />} primary /> : null}
+        {prospect.status === "to_contact" && prospect.contact_now ? <ActionButton intent="markConnectionSentWithoutNote" prospectId={prospect.id} label="Sent without note" icon={<UserCheck size={16} />} /> : null}
+        {prospect.connection_message ? <CopyButton label="Copy note" value={prospect.connection_message} /> : null}
+        {prospect.post_acceptance_message ? <CopyButton label="Copy message" value={prospect.post_acceptance_message} /> : null}
+        {prospect.status === "accepted" ? <ActionButton intent="markReportSent" prospectId={prospect.id} label="Mark sent" icon={<Check size={16} />} primary /> : null}
         {prospect.followup_message ? <CopyButton label="Copy follow-up" value={prospect.followup_message} /> : null}
         <ActionButton intent="saveForLater" prospectId={prospect.id} label="Save for later" icon={<Save size={16} />} />
         <ActionButton intent="skip" prospectId={prospect.id} label="Skip" icon={<SkipForward size={16} />} danger />
@@ -371,6 +375,11 @@ function MessageBlock({ title, content }: { title: string; content: string | nul
 function Badge({ children, tone = "green" }: { children: React.ReactNode; tone?: "green" | "blue" }) {
   const className = tone === "blue" ? "bg-blue-50 text-blue-800" : "bg-teal-50 text-teal-800";
   return <span className={`inline-flex min-h-6 items-center rounded-full px-2.5 text-xs font-semibold ${className}`}>{children}</span>;
+}
+
+function outreachModeLabel(prospect: Prospect) {
+  if (prospect.status === "to_contact") return "note optional";
+  return prospect.outreach_mode === "no_note" ? "no note" : "with note";
 }
 
 function ActionButton({
