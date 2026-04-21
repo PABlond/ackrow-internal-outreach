@@ -1,0 +1,33 @@
+{
+  "name": "tempolis-outreach-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "init": "node scripts/init.js",
+    "dev": "react-router dev --port 4377",
+    "build": "react-router build",
+    "start": "react-router-serve ./build/server/index.js",
+    "typecheck": "react-router typegen && tsc",
+    "check": "node scripts/check.js"
+  },
+  "dependencies": {
+    "@react-router/node": "^7.14.1",
+    "@react-router/serve": "^7.14.1",
+    "isbot": "^5.1.32",
+    "lucide-react": "^1.7.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router": "^7.14.1"
+  },
+  "devDependencies": {
+    "@react-router/dev": "^7.14.1",
+    "@tailwindcss/vite": "^4.2.2",
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7",
+    "vite-tsconfig-paths": "^5.1.4"
+  }
+}
