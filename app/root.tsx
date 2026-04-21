@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Links, Meta, Outlet, Scripts, ScrollRestoration, isRouteErrorResponse, useRouteError } from "react-router";
 
+import { ThemeToggle } from "./components/theme-toggle";
 import "./app.css";
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -11,8 +12,14 @@ export function Layout({ children }: { children: ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{if(localStorage.getItem("theme")==="dark")document.documentElement.classList.add("dark")}catch(e){}`,
+          }}
+        />
       </head>
       <body>
+        <ThemeToggle />
         {children}
         <ScrollRestoration />
         <Scripts />

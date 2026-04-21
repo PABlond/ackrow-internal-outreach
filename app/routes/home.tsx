@@ -1,5 +1,5 @@
 import { Form, Link, redirect, useLoaderData } from "react-router";
-import { CalendarCheck, Check, Clipboard, Clock, ExternalLink, LinkIcon, Plus, Save, Send, SkipForward, UserCheck } from "lucide-react";
+import { CalendarCheck, Check, Clipboard, Clock, ExternalLink, LinkIcon, Plus, Save, Search, Send, SkipForward, UserPlus, UserCheck } from "lucide-react";
 
 import type { Route } from "./+types/home";
 import { getDashboard, runProspectAction, type Prospect, type Task } from "~/lib/outreach.server";
@@ -21,7 +21,7 @@ export async function action({ request }: Route.ActionArgs) {
 
 export default function Home() {
   const data = useLoaderData<typeof loader>();
-  const activeProspects = data.prospects.filter((prospect) => !["saved_for_later", "skipped"].includes(prospect.status));
+  const activeProspects = data.prospects.filter((prospect) => !["saved_for_later", "skipped", "archived_declined"].includes(prospect.status));
 
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-8 text-stone-950 sm:px-6 lg:px-8">
@@ -35,6 +35,20 @@ export default function Home() {
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <Link
+              to="/search"
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-4 font-medium text-stone-900 hover:border-teal-700"
+            >
+              <Search size={18} />
+              Search CRM
+            </Link>
+            <Link
+              to="/discover"
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-4 font-medium text-stone-900 hover:border-teal-700"
+            >
+              <UserPlus size={18} />
+              Discover
+            </Link>
             <Link
               to="/batch"
               className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-4 font-medium text-white hover:bg-teal-800"
@@ -64,34 +78,30 @@ export default function Home() {
                 <TodayPanel title="Connect today" items={data.sections.toConnect}>
                   {(task) => {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
-                    return prospect ? <ConnectTask prospect={prospect} /> : null;
+                    return prospect ? <DashboardTaskLink prospect={prospect} detail="Send LinkedIn connection request" /> : null;
                   }}
                 </TodayPanel>
                 <TodayPanel title="Accepted, report to send" items={data.sections.acceptedReport}>
-                  {(prospect) => <ReportTask prospect={prospect} />}
+                  {(prospect) => <DashboardTaskLink prospect={prospect} detail="Connection accepted, report to send" />}
                 </TodayPanel>
                 <TodayPanel title="Brief URLs missing" items={data.sections.missingBriefUrls}>
-                  {(prospect) => <BriefUrlTask prospect={prospect} />}
+                  {(prospect) => <DashboardTaskLink prospect={prospect} detail={`Prepare brief URL for ${prospect.brief_topic || "brief"}`} />}
                 </TodayPanel>
                 <TodayPanel title="Follow-ups due" items={data.sections.followupsDue}>
                   {(task) => {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
-                    return <FollowupTask task={task} prospect={prospect} today={data.today} />;
+                    return prospect ? <DashboardTaskLink prospect={prospect} detail={`Follow-up due ${task.due_date || ""}`} /> : null;
                   }}
                 </TodayPanel>
                 <TodayPanel title="Pending connections" items={data.sections.pendingConnections}>
-                  {(prospect) => <PendingTask prospect={prospect} />}
+                  {(prospect) => <DashboardTaskLink prospect={prospect} detail={`Sent ${prospect.connection_sent_date || "today"} · watch acceptance`} />}
                 </TodayPanel>
               </div>
             </section>
 
             <section>
-              <SectionTitle title="Active prospects" detail={`${activeProspects.length} profiles in the working set.`} />
-              <div className="mt-3 grid gap-3">
-                {activeProspects.map((prospect) => (
-                  <ProspectCard key={prospect.id} prospect={prospect} />
-                ))}
-              </div>
+              <SectionTitle title="Prospects in progress" detail={`${activeProspects.length} profiles in the working set.`} />
+              <ProspectsTable prospects={activeProspects} />
             </section>
           </div>
 
@@ -117,6 +127,65 @@ export default function Home() {
       </div>
     </main>
   );
+}
+
+function DashboardTaskLink({ prospect, detail }: { prospect: Prospect; detail: string }) {
+  return (
+    <Link
+      to={`/prospects/${prospect.id}`}
+      className="grid gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3 hover:border-teal-700 md:grid-cols-[1fr_auto] md:items-center"
+    >
+      <TaskIntro icon={<Clock size={18} />} title={prospect.name} detail={detail} />
+      <div className="flex flex-wrap gap-2">
+        <Badge>{prospect.priority_tag}</Badge>
+        <Badge tone="blue">{prospect.status}</Badge>
+      </div>
+    </Link>
+  );
+}
+
+function ProspectsTable({ prospects }: { prospects: Prospect[] }) {
+  return (
+    <div className="mt-3 overflow-x-auto rounded-lg border border-stone-300 bg-white">
+      <table className="min-w-[900px] w-full border-collapse text-sm">
+        <thead className="bg-stone-50 text-left text-xs font-bold uppercase text-stone-500">
+          <tr>
+            <th className="border-b border-stone-300 px-4 py-3">Prospect</th>
+            <th className="border-b border-stone-300 px-4 py-3">Status</th>
+            <th className="border-b border-stone-300 px-4 py-3">Wave</th>
+            <th className="border-b border-stone-300 px-4 py-3">Brief</th>
+            <th className="border-b border-stone-300 px-4 py-3">Next</th>
+          </tr>
+        </thead>
+        <tbody>
+          {prospects.map((prospect) => (
+            <tr key={prospect.id} className="hover:bg-stone-50">
+              <td className="border-b border-stone-200 px-4 py-3">
+                <Link to={`/prospects/${prospect.id}`} className="font-semibold text-stone-950 hover:text-teal-800">
+                  {prospect.name}
+                </Link>
+                <p className="mt-1 max-w-xl truncate text-stone-600">{prospect.position}</p>
+              </td>
+              <td className="border-b border-stone-200 px-4 py-3"><Badge tone="blue">{prospect.status}</Badge></td>
+              <td className="border-b border-stone-200 px-4 py-3">{prospect.wave || "-"}</td>
+              <td className="border-b border-stone-200 px-4 py-3">{prospect.brief_topic || "-"}</td>
+              <td className="border-b border-stone-200 px-4 py-3 text-stone-600">{nextActionLabel(prospect)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function nextActionLabel(prospect: Prospect) {
+  if (prospect.status === "to_contact" && prospect.contact_now) return "Send connection request";
+  if (prospect.status === "connection_sent") return "Watch acceptance or archive";
+  if (prospect.status === "accepted") return "Send report";
+  if (prospect.status === "report_sent") return "Wait for follow-up";
+  if (prospect.status === "followup_due") return "Send follow-up";
+  if (prospect.status === "archived_declined") return "Archived";
+  return "Review";
 }
 
 function Metric({ label, value }: { label: string; value: number }) {

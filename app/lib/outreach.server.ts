@@ -77,6 +77,50 @@ export type Event = {
   name: string | null;
 };
 
+export function getProspectDetail(id: number) {
+  const db = getDb();
+  const prospect = db.prepare(`
+    SELECT
+      p.*,
+      b.topic AS brief_topic,
+      b.preparation_notes,
+      b.shared_url,
+      cm.content AS connection_message,
+      rm.content AS report_message,
+      fm.content AS followup_message,
+      fm.due_date AS followup_due_date
+    FROM prospects p
+    LEFT JOIN briefs b ON b.prospect_id = p.id
+    LEFT JOIN messages cm ON cm.prospect_id = p.id AND cm.type = 'connection'
+    LEFT JOIN messages rm ON rm.prospect_id = p.id AND rm.type = 'report'
+    LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
+    WHERE p.id = ?
+  `).get(id) as Prospect | undefined;
+
+  if (!prospect) return null;
+
+  const tasks = db.prepare(`
+    SELECT t.*, p.name, p.profile_url
+    FROM tasks t
+    LEFT JOIN prospects p ON p.id = t.prospect_id
+    WHERE t.prospect_id = ?
+    ORDER BY
+      CASE t.status WHEN 'open' THEN 0 ELSE 1 END,
+      COALESCE(t.due_date, '9999-12-31'),
+      t.created_at
+  `).all(id) as Task[];
+
+  const events = db.prepare(`
+    SELECT e.*, p.name
+    FROM events e
+    LEFT JOIN prospects p ON p.id = e.prospect_id
+    WHERE e.prospect_id = ?
+    ORDER BY e.happened_at DESC, e.id DESC
+  `).all(id) as Event[];
+
+  return { prospect, tasks, events, today: todayIso() };
+}
+
 export function getDashboard() {
   const db = getDb();
   const today = todayIso();
@@ -166,6 +210,10 @@ export function runProspectAction(formData: FormData) {
       completeOpenTask(id, "watch_acceptance");
       createOpenTask(id, "send_report", `Send report to ${prospect.name}`, today);
       addEvent(id, "accepted", "LinkedIn connection accepted.", today);
+    } else if (intent === "archiveDeclined") {
+      db.prepare("UPDATE prospects SET status = 'archived_declined', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      completeAllOpenTasks(id);
+      addEvent(id, "archived_declined", "Connection request declined or ignored. Archived to avoid recontacting.", today);
     } else if (intent === "markConnectionSent") {
       db.prepare("UPDATE prospects SET status = 'connection_sent', connection_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
       db.prepare("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'connection'").run(today, id);

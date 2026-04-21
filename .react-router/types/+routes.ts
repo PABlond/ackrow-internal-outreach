@@ -17,12 +17,23 @@ type Pages = {
   "/batch": {
     params: {};
   };
+  "/discover": {
+    params: {};
+  };
+  "/search": {
+    params: {};
+  };
+  "/prospects/:id": {
+    params: {
+      "id": string;
+    };
+  };
 };
 
 type RouteFiles = {
   "root.tsx": {
     id: "root";
-    page: "/" | "/batch";
+    page: "/" | "/batch" | "/discover" | "/search" | "/prospects/:id";
   };
   "routes/home.tsx": {
     id: "routes/home";
@@ -32,10 +43,25 @@ type RouteFiles = {
     id: "routes/batch";
     page: "/batch";
   };
+  "routes/discover.tsx": {
+    id: "routes/discover";
+    page: "/discover";
+  };
+  "routes/search.tsx": {
+    id: "routes/search";
+    page: "/search";
+  };
+  "routes/prospect.$id.tsx": {
+    id: "routes/prospect.$id";
+    page: "/prospects/:id";
+  };
 };
 
 type RouteModules = {
   "root": typeof import("./app/root.tsx");
   "routes/home": typeof import("./app/routes/home.tsx");
   "routes/batch": typeof import("./app/routes/batch.tsx");
+  "routes/discover": typeof import("./app/routes/discover.tsx");
+  "routes/search": typeof import("./app/routes/search.tsx");
+  "routes/prospect.$id": typeof import("./app/routes/prospect.$id.tsx");
 };
