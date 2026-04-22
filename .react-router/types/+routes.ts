@@ -17,6 +17,9 @@ type Pages = {
   "/batch": {
     params: {};
   };
+  "/twitter": {
+    params: {};
+  };
   "/discover": {
     params: {};
   };
@@ -42,7 +45,7 @@ type Pages = {
 type RouteFiles = {
   "root.tsx": {
     id: "root";
-    page: "/" | "/batch" | "/discover" | "/search" | "/api/extension/dashboard" | "/api/extension/connection-status" | "/api/extension/prospect" | "/prospects/:id";
+    page: "/" | "/batch" | "/twitter" | "/discover" | "/search" | "/api/extension/dashboard" | "/api/extension/connection-status" | "/api/extension/prospect" | "/prospects/:id";
   };
   "routes/home.tsx": {
     id: "routes/home";
@@ -51,6 +54,10 @@ type RouteFiles = {
   "routes/batch.tsx": {
     id: "routes/batch";
     page: "/batch";
+  };
+  "routes/twitter.tsx": {
+    id: "routes/twitter";
+    page: "/twitter";
   };
   "routes/discover.tsx": {
     id: "routes/discover";
@@ -82,6 +89,7 @@ type RouteModules = {
   "root": typeof import("./app/root.tsx");
   "routes/home": typeof import("./app/routes/home.tsx");
   "routes/batch": typeof import("./app/routes/batch.tsx");
+  "routes/twitter": typeof import("./app/routes/twitter.tsx");
   "routes/discover": typeof import("./app/routes/discover.tsx");
   "routes/search": typeof import("./app/routes/search.tsx");
   "routes/api.extension.dashboard": typeof import("./app/routes/api.extension.dashboard.ts");

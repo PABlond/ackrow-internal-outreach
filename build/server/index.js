@@ -1,7 +1,7 @@
 import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { PassThrough } from "node:stream";
 import { createReadableStreamFromReadable } from "@react-router/node";
-import { ServerRouter, UNSAFE_withComponentProps, Outlet, UNSAFE_withErrorBoundaryProps, useRouteError, isRouteErrorResponse, Meta, Links, ScrollRestoration, Scripts, useLoaderData, Link as Link$1, redirect, useActionData, Form, useSearchParams, data } from "react-router";
+import { ServerRouter, UNSAFE_withComponentProps, Outlet, UNSAFE_withErrorBoundaryProps, useRouteError, isRouteErrorResponse, Meta, Links, ScrollRestoration, Scripts, useLoaderData, Link as Link$1, Form, redirect, useActionData, useSearchParams, data } from "react-router";
 import { isbot } from "isbot";
 import { renderToPipeableStream } from "react-dom/server";
 import { useContext, createContext, forwardRef, createElement, useState, useEffect } from "react";
@@ -144,17 +144,22 @@ const createLucideIcon = (iconName, iconNode) => {
   Component.displayName = toPascalCase(iconName);
   return Component;
 };
-const __iconNode$m = [
+const __iconNode$n = [
   ["rect", { width: "20", height: "5", x: "2", y: "3", rx: "1", key: "1wp1u1" }],
   ["path", { d: "M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8", key: "1s80jp" }],
   ["path", { d: "M10 12h4", key: "a56b0p" }]
 ];
-const Archive = createLucideIcon("archive", __iconNode$m);
-const __iconNode$l = [
+const Archive = createLucideIcon("archive", __iconNode$n);
+const __iconNode$m = [
   ["path", { d: "m12 19-7-7 7-7", key: "1l729n" }],
   ["path", { d: "M19 12H5", key: "x3x0zl" }]
 ];
-const ArrowLeft = createLucideIcon("arrow-left", __iconNode$l);
+const ArrowLeft = createLucideIcon("arrow-left", __iconNode$m);
+const __iconNode$l = [
+  ["circle", { cx: "12", cy: "12", r: "4", key: "4exip2" }],
+  ["path", { d: "M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8", key: "7n84p3" }]
+];
+const AtSign = createLucideIcon("at-sign", __iconNode$l);
 const __iconNode$k = [
   ["path", { d: "M12 18V5", key: "adv99a" }],
   ["path", { d: "M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4", key: "1e3is1" }],
@@ -408,6 +413,43 @@ async function setProspectOutreachPreference(id, mode) {
   await run("UPDATE prospects SET outreach_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [mode, id]);
   await addEvent(id, mode === "no_note" ? "no_note_mode_selected" : "with_note_mode_selected", `Extension selected ${mode === "no_note" ? "no-note" : "with-note"} outreach mode.`, today);
 }
+async function getExtensionDashboard() {
+  const pendingConnections = await all(`
+    SELECT id, name, position, profile_url, outreach_mode, connection_sent_date, pending_checked_at, connection_last_state
+    FROM prospects
+    WHERE status = 'connection_sent'
+    ORDER BY
+      CASE WHEN pending_checked_at IS NULL THEN 0 ELSE 1 END,
+      pending_checked_at,
+      COALESCE(connection_sent_date, '9999-12-31'),
+      name
+  `);
+  return {
+    today: todayIso(),
+    pendingConnections
+  };
+}
+async function syncProspectConnectionState(id, state) {
+  const today = todayIso();
+  const prospect = await one("SELECT id, name, status FROM prospects WHERE id = ?", [id]);
+  if (!prospect) {
+    throw new Error("Unknown prospect");
+  }
+  if (state === "pending") {
+    await run("UPDATE prospects SET pending_checked_at = CURRENT_TIMESTAMP, connection_last_state = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+    return;
+  }
+  if (state === "accepted") {
+    await run("UPDATE prospects SET status = 'accepted', accepted_date = ?, connection_last_state = 'accepted', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+    await completeOpenTask(id, "watch_acceptance");
+    await createOpenTask(id, "send_report", `Send first message to ${prospect.name}`, today);
+    await addEvent(id, "accepted", "LinkedIn connection accepted. Synced from extension.", today);
+    return;
+  }
+  await run("UPDATE prospects SET status = 'archived_declined', connection_last_state = 'declined', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+  await completeAllOpenTasks(id);
+  await addEvent(id, "archived_declined", "Connection no longer pending on LinkedIn. Synced from extension.", today);
+}
 async function getProspectDetail(id) {
   const prospect = await one(`
     SELECT
@@ -419,6 +461,8 @@ async function getProspectDetail(id) {
       rm.content AS report_message,
       nrm.content AS no_note_report_message,
       fm.content AS followup_message,
+      tdm.content AS twitter_dm_message,
+      tfm.content AS twitter_followup_message,
       fm.due_date AS followup_due_date
     FROM prospects p
     LEFT JOIN briefs b ON b.prospect_id = p.id
@@ -426,11 +470,13 @@ async function getProspectDetail(id) {
     LEFT JOIN messages rm ON rm.prospect_id = p.id AND rm.type = 'report'
     LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
     LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
+    LEFT JOIN messages tdm ON tdm.prospect_id = p.id AND tdm.type = 'twitter_dm'
+    LEFT JOIN messages tfm ON tfm.prospect_id = p.id AND tfm.type = 'twitter_followup'
     WHERE p.id = ?
   `, [id]);
   if (!prospect) return null;
   const tasks = await all(`
-    SELECT t.*, p.name, p.profile_url
+    SELECT t.*, p.name, p.profile_url, p.source_channel, p.twitter_url
     FROM tasks t
     LEFT JOIN prospects p ON p.id = t.prospect_id
     WHERE t.prospect_id = ?
@@ -466,6 +512,8 @@ async function getDashboard() {
       rm.content AS report_message,
       nrm.content AS no_note_report_message,
       fm.content AS followup_message,
+      tdm.content AS twitter_dm_message,
+      tfm.content AS twitter_followup_message,
       fm.due_date AS followup_due_date
     FROM prospects p
     LEFT JOIN briefs b ON b.prospect_id = p.id
@@ -473,9 +521,12 @@ async function getDashboard() {
     LEFT JOIN messages rm ON rm.prospect_id = p.id AND rm.type = 'report'
     LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
     LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
+    LEFT JOIN messages tdm ON tdm.prospect_id = p.id AND tdm.type = 'twitter_dm'
+    LEFT JOIN messages tfm ON tfm.prospect_id = p.id AND tfm.type = 'twitter_followup'
     ORDER BY
       CASE p.status
         WHEN 'accepted' THEN 1
+        WHEN 'twitter_contacted' THEN 2
         WHEN 'connection_sent' THEN 2
         WHEN 'to_contact' THEN 3
         WHEN 'report_sent' THEN 4
@@ -492,7 +543,7 @@ async function getDashboard() {
   `);
   const prospects = prospectRows.map(withDerivedMessages);
   const tasks = await all(`
-    SELECT t.*, p.name, p.profile_url
+    SELECT t.*, p.name, p.profile_url, p.source_channel, p.twitter_url
     FROM tasks t
     LEFT JOIN prospects p ON p.id = t.prospect_id
     ORDER BY
@@ -514,15 +565,16 @@ async function getDashboard() {
     events,
     sections: {
       toConnect: tasks.filter((item) => item.status === "open" && item.type === "send_connection"),
+      twitterToContact: tasks.filter((item) => item.status === "open" && item.type === "send_twitter_dm"),
       acceptedReport: prospects.filter((item) => item.status === "accepted" && !item.report_sent_date),
       missingBriefUrls: prospects.filter(
         (item) => ["connection_sent", "accepted"].includes(item.status) && Boolean(item.brief_topic) && !item.shared_url
       ),
       followupsDue: tasks.filter(
-        (item) => item.status === "open" && item.type === "send_followup" && item.due_date && item.due_date <= today
+        (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date <= today
       ),
       followupsScheduled: tasks.filter(
-        (item) => item.status === "open" && item.type === "send_followup" && item.due_date && item.due_date > today
+        (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date > today
       ),
       conversationsActive: prospects.filter((item) => item.status === "conversation_active"),
       pendingConnections: prospects.filter((item) => item.status === "connection_sent"),
@@ -591,10 +643,23 @@ async function runProspectAction(formData) {
     } else if (intent === "updateMessage") {
       const type = String(formData.get("messageType") || "").trim();
       const content = String(formData.get("messageContent") || "").trim();
-      if (!["connection", "report", "report_no_note", "followup"].includes(type)) throw new Error("Unknown message type");
+      if (!["connection", "report", "report_no_note", "followup", "twitter_dm", "twitter_followup"].includes(type)) throw new Error("Unknown message type");
       if (!content) throw new Error("Message content is required");
       await upsertGeneratedMessage(id, type, content, type === "followup" ? null : null);
       await addEvent(id, "message_updated", `${type} message edited.`, today);
+    } else if (intent === "markTwitterDmSent") {
+      const followupDate = addDaysIso(today, 2);
+      await run("UPDATE prospects SET status = 'twitter_contacted', twitter_contacted_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+      await run("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'twitter_dm'", [today, id]);
+      await run("UPDATE messages SET due_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'twitter_followup'", [followupDate, id]);
+      await completeOpenTask(id, "send_twitter_dm");
+      await createOpenTask(id, "send_twitter_followup", `Follow up on X with ${prospect.name}`, followupDate);
+      await addEvent(id, "twitter_dm_sent", `Twitter/X DM sent. Follow-up due on ${followupDate}.`, today);
+    } else if (intent === "markTwitterFollowupSent") {
+      await run("UPDATE prospects SET status = 'followup_sent', twitter_followup_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+      await run("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'twitter_followup'", [today, id]);
+      await completeOpenTask(id, "send_twitter_followup");
+      await addEvent(id, "twitter_followup_sent", "Twitter/X follow-up sent.", today);
     } else if (intent === "markAccepted") {
       await run("UPDATE prospects SET status = 'accepted', accepted_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
       await completeOpenTask(id, "watch_acceptance");
@@ -705,15 +770,21 @@ async function importAnalyzedProspects(items) {
       const item = normalizeAnalyzedProspect(raw);
       if (!item.name || !item.profileUrl) continue;
       const status = statusForImportedProspect(item);
+      const sourceChannel = item.sourceChannel === "twitter" ? "twitter" : "linkedin";
+      const twitterUrl = sourceChannel === "twitter" ? normalizeTwitterUrl$1(item.twitterUrl || item.profileUrl) : null;
+      const twitterHandle = sourceChannel === "twitter" ? normalizeTwitterHandle$1(item.twitterHandle || item.profileUrl) : null;
       await run(`
         INSERT INTO prospects (
-          name, position, profile_url, about, priority_tag, wave, contact_now,
+          name, position, profile_url, source_channel, twitter_handle, twitter_url, about, priority_tag, wave, contact_now,
           rationale, recommended_template, notes, status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(profile_url) DO UPDATE SET
           name = excluded.name,
           position = excluded.position,
+          source_channel = excluded.source_channel,
+          twitter_handle = excluded.twitter_handle,
+          twitter_url = excluded.twitter_url,
           about = excluded.about,
           priority_tag = excluded.priority_tag,
           wave = excluded.wave,
@@ -730,6 +801,9 @@ async function importAnalyzedProspects(items) {
         item.name,
         item.position,
         item.profileUrl,
+        sourceChannel,
+        twitterHandle,
+        twitterUrl,
         item.about,
         item.priorityTag,
         item.wave,
@@ -763,10 +837,20 @@ async function importAnalyzedProspects(items) {
       if (item.followupMessage) {
         await upsertGeneratedMessage(prospect.id, "followup", item.followupMessage, null);
       }
-      if (item.contactNow && status === "to_contact") {
-        await createOpenTask(prospect.id, "send_connection", `Send connection request to ${item.name}`, today);
+      if (item.twitterDmMessage) {
+        await upsertGeneratedMessage(prospect.id, "twitter_dm", item.twitterDmMessage, null);
       }
-      await addEvent(prospect.id, "batch_imported", `Analyzed as ${item.priorityTag}${item.wave ? ` wave ${item.wave}` : ""}.`, today);
+      if (item.twitterFollowupMessage) {
+        await upsertGeneratedMessage(prospect.id, "twitter_followup", item.twitterFollowupMessage, null);
+      }
+      if (item.contactNow && status === "to_contact") {
+        if (sourceChannel === "twitter") {
+          await createOpenTask(prospect.id, "send_twitter_dm", `Send Twitter/X DM to ${item.name}`, today);
+        } else {
+          await createOpenTask(prospect.id, "send_connection", `Send connection request to ${item.name}`, today);
+        }
+      }
+      await addEvent(prospect.id, "batch_imported", `Analyzed from ${sourceChannel} as ${item.priorityTag}${item.wave ? ` wave ${item.wave}` : ""}.`, today);
     }
   } catch (error) {
     throw error;
@@ -774,6 +858,18 @@ async function importAnalyzedProspects(items) {
 }
 function normalizeLinkedInUrl$1(value) {
   return value.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
+}
+function normalizeTwitterUrl$1(value) {
+  const trimmed = value.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
+  const handle = normalizeTwitterHandle$1(trimmed);
+  if (handle) return `https://x.com/${handle}`;
+  return trimmed;
+}
+function normalizeTwitterHandle$1(value) {
+  const trimmed = value.trim();
+  const match = trimmed.match(/(?:x\.com|twitter\.com)\/@?([^/?#\s]+)/i);
+  const raw = match?.[1] || trimmed.replace(/^@/, "");
+  return raw && !/^https?:\/\//i.test(raw) ? raw.replace(/[^a-zA-Z0-9_]/g, "") : "";
 }
 async function getDb() {
   if (!database) {
@@ -802,15 +898,8 @@ async function applyMigrations(db) {
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
-    await db.execute("BEGIN");
-    try {
-      await db.executeMultiple(sql);
-      await db.execute({ sql: "INSERT INTO schema_migrations (version) VALUES (?)", args: [file] });
-      await db.execute("COMMIT");
-    } catch (error) {
-      await db.execute("ROLLBACK");
-      throw error;
-    }
+    await db.executeMultiple(sql);
+    await db.execute({ sql: "INSERT INTO schema_migrations (version) VALUES (?)", args: [file] });
   }
 }
 async function createOpenTask(prospectId, type, title, dueDate) {
@@ -883,6 +972,7 @@ function withDerivedMessages(prospect) {
   );
   return {
     ...prospect,
+    source_channel: prospect.source_channel || "linkedin",
     outreach_mode: prospect.outreach_mode || "with_note",
     connection_note_sent: prospect.connection_note_sent || 0,
     post_acceptance_message: prospect.outreach_mode === "no_note" ? prospect.no_note_report_message ? sanitizeNoNoteMessage(prospect.no_note_report_message, noNoteFallback) : rewriteReportForNoNote(prospect.report_message, prospect.name, prospect.brief_topic, prospect.position, prospect.about, prospect.recommended_template) : prospect.report_message
@@ -1080,10 +1170,12 @@ function normalizeAnalyzedProspect(item) {
   const name = String(item.name || "").trim();
   const reportMessage = String(item.reportMessage || "").trim();
   const noNoteFallback = rewriteReportForNoNote(reportMessage, name, topic, item.position, item.about, item.recommendedTemplate);
+  const sourceChannel = item.sourceChannel === "twitter" ? "twitter" : "linkedin";
+  const profileUrl = sourceChannel === "twitter" ? normalizeTwitterUrl$1(item.profileUrl || item.twitterUrl || "") : String(item.profileUrl || "").trim();
   return {
     name,
     position: String(item.position || "").trim(),
-    profileUrl: String(item.profileUrl || "").trim(),
+    profileUrl,
     about: String(item.about || "").trim(),
     priorityTag: tag,
     wave: item.wave ? Number(item.wave) : null,
@@ -1095,22 +1187,27 @@ function normalizeAnalyzedProspect(item) {
     connectionMessage: String(item.connectionMessage || "").trim().slice(0, 300),
     reportMessage,
     noNoteReportMessage: sanitizeNoNoteMessage(String(item.noNoteReportMessage || ""), noNoteFallback),
-    followupMessage: String(item.followupMessage || "").trim()
+    followupMessage: String(item.followupMessage || "").trim(),
+    sourceChannel,
+    twitterHandle: sourceChannel === "twitter" ? normalizeTwitterHandle$1(item.twitterHandle || profileUrl) : "",
+    twitterUrl: sourceChannel === "twitter" ? normalizeTwitterUrl$1(item.twitterUrl || profileUrl) : "",
+    twitterDmMessage: String(item.twitterDmMessage || "").trim(),
+    twitterFollowupMessage: String(item.twitterFollowupMessage || "").trim()
   };
 }
 function trimWords(value, max) {
   return value.trim().split(/\s+/).filter(Boolean).slice(0, max).join(" ");
 }
-const meta$4 = () => [{
+const meta$5 = () => [{
   title: "Tempolis Outreach"
 }, {
   name: "description",
   content: "Internal Tempolis outreach tracker."
 }];
-async function loader$2() {
+async function loader$3() {
   return await getDashboard();
 }
-async function action$3({
+async function action$5({
   request
 }) {
   const formData = await request.formData();
@@ -1120,6 +1217,7 @@ async function action$3({
 const home = UNSAFE_withComponentProps(function Home() {
   const data2 = useLoaderData();
   const activeProspects = data2.prospects.filter((prospect) => !["saved_for_later", "skipped", "archived_declined", "archived"].includes(prospect.status));
+  const todoItems = buildTodoItems(data2);
   return /* @__PURE__ */ jsx("main", {
     className: "min-h-screen bg-stone-100 px-4 py-8 text-stone-950 sm:px-6 lg:px-8",
     children: /* @__PURE__ */ jsxs("div", {
@@ -1152,6 +1250,12 @@ const home = UNSAFE_withComponentProps(function Home() {
               size: 18
             }), "Discover"]
           }), /* @__PURE__ */ jsxs(Link$1, {
+            to: "/twitter",
+            className: "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-4 font-medium text-stone-900 hover:border-teal-700",
+            children: [/* @__PURE__ */ jsx(AtSign, {
+              size: 18
+            }), "Twitter/X"]
+          }), /* @__PURE__ */ jsxs(Link$1, {
             to: "/batch",
             className: "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-4 font-medium text-white hover:bg-teal-800",
             children: [/* @__PURE__ */ jsx(Plus, {
@@ -1170,16 +1274,16 @@ const home = UNSAFE_withComponentProps(function Home() {
         })]
       }), /* @__PURE__ */ jsxs("section", {
         className: "mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4",
-        children: [/* @__PURE__ */ jsx(Metric$1, {
+        children: [/* @__PURE__ */ jsx(Metric$2, {
           label: "Prospects",
           value: data2.prospects.length
-        }), /* @__PURE__ */ jsx(Metric$1, {
+        }), /* @__PURE__ */ jsx(Metric$2, {
           label: "Pending connections",
           value: data2.sections.pendingConnections.length
-        }), /* @__PURE__ */ jsx(Metric$1, {
+        }), /* @__PURE__ */ jsx(Metric$2, {
           label: "Reports to send",
           value: data2.sections.acceptedReport.length
-        }), /* @__PURE__ */ jsx(Metric$1, {
+        }), /* @__PURE__ */ jsx(Metric$2, {
           label: "Active conversations",
           value: data2.sections.conversationsActive.length
         })]
@@ -1188,6 +1292,16 @@ const home = UNSAFE_withComponentProps(function Home() {
         children: [/* @__PURE__ */ jsxs("div", {
           className: "space-y-8",
           children: [/* @__PURE__ */ jsxs("section", {
+            children: [/* @__PURE__ */ jsx(SectionTitle$1, {
+              title: "Todo",
+              detail: "Highest-priority actions across the pipeline."
+            }), /* @__PURE__ */ jsx("div", {
+              className: "mt-3 grid gap-3",
+              children: todoItems.length ? todoItems.map((item) => /* @__PURE__ */ jsx(TodoItemRow, {
+                item
+              }, item.key)) : /* @__PURE__ */ jsx(EmptyState$1, {})
+            })]
+          }), /* @__PURE__ */ jsxs("section", {
             children: [/* @__PURE__ */ jsx(SectionTitle$1, {
               title: "Today",
               detail: "What needs attention first."
@@ -1202,6 +1316,17 @@ const home = UNSAFE_withComponentProps(function Home() {
                   return prospect ? /* @__PURE__ */ jsx(DashboardTaskLink, {
                     prospect,
                     detail: "Send LinkedIn request with note, or without note if capped"
+                  }) : null;
+                }
+              }), /* @__PURE__ */ jsx(TodayPanel, {
+                storageKey: "twitter-dms",
+                title: "Twitter/X DMs today",
+                items: data2.sections.twitterToContact,
+                children: (task) => {
+                  const prospect = data2.prospects.find((item) => item.id === task.prospect_id);
+                  return prospect ? /* @__PURE__ */ jsx(DashboardTaskLink, {
+                    prospect,
+                    detail: "Send Twitter/X first touch manually"
                   }) : null;
                 }
               }), /* @__PURE__ */ jsx(TodayPanel, {
@@ -1329,11 +1454,11 @@ function DashboardTaskLink({
         tone: "blue",
         children: prospect.status
       }), /* @__PURE__ */ jsx("a", {
-        href: prospect.profile_url,
+        href: prospect.twitter_url || prospect.profile_url,
         target: "_blank",
         rel: "noreferrer",
-        "aria-label": `Open ${prospect.name} on LinkedIn`,
-        title: "Open LinkedIn profile",
+        "aria-label": `Open ${prospect.name} profile`,
+        title: prospect.source_channel === "twitter" ? "Open X profile" : "Open LinkedIn profile",
         className: "inline-flex size-7 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-600 hover:border-teal-700 hover:text-teal-800",
         children: /* @__PURE__ */ jsx(ExternalLink, {
           size: 14
@@ -1341,6 +1466,251 @@ function DashboardTaskLink({
       })]
     })]
   });
+}
+function buildTodoItems(data2) {
+  const prospectsById = new Map(data2.prospects.map((prospect) => [prospect.id, prospect]));
+  const watchAcceptanceTasksByProspectId = new Map(data2.tasks.filter((task) => task.status === "open" && task.type === "watch_acceptance" && task.prospect_id).map((task) => [task.prospect_id, task]));
+  const todos = [];
+  for (const prospect of data2.sections.acceptedReport) {
+    todos.push({
+      key: `accepted-report-${prospect.id}`,
+      priority: 10,
+      title: `Send first message to ${prospect.name}`,
+      detail: `${prospect.brief_topic || "No brief topic"} · connection accepted`,
+      kind: "message",
+      prospect
+    });
+  }
+  for (const task of data2.sections.followupsDue) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : void 0;
+    todos.push({
+      key: `followup-${task.id}`,
+      priority: task.due_date && task.due_date < data2.today ? 20 : 25,
+      title: `Send follow-up to ${task.name || prospect?.name || "prospect"}`,
+      detail: task.due_date && task.due_date < data2.today ? `Overdue since ${task.due_date}` : `Due ${task.due_date || "today"}`,
+      kind: "followup",
+      prospect,
+      task
+    });
+  }
+  for (const task of data2.sections.toConnect) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : void 0;
+    if (!prospect) continue;
+    todos.push({
+      key: `connect-${task.id}`,
+      priority: 30,
+      title: `Send connection request to ${prospect.name}`,
+      detail: `${outreachModeLabel$1(prospect)} · ${prospect.brief_topic || "no brief topic"}`,
+      kind: "connection",
+      prospect,
+      task
+    });
+  }
+  for (const task of data2.sections.twitterToContact) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : void 0;
+    if (!prospect) continue;
+    todos.push({
+      key: `twitter-${task.id}`,
+      priority: 30,
+      title: `Send Twitter/X DM to ${prospect.name}`,
+      detail: `${prospect.brief_topic || "no brief topic"} · manual first touch`,
+      kind: "twitter",
+      prospect,
+      task
+    });
+  }
+  for (const prospect of data2.sections.missingBriefUrls.filter((item) => item.status !== "connection_sent")) {
+    todos.push({
+      key: `brief-url-${prospect.id}`,
+      priority: 40,
+      title: `Add brief URL for ${prospect.name}`,
+      detail: `Prepare ${prospect.brief_topic || "brief"} before first message`,
+      kind: "brief",
+      prospect
+    });
+  }
+  for (const prospect of data2.sections.pendingConnections) {
+    const watchTask = watchAcceptanceTasksByProspectId.get(prospect.id);
+    const pendingAge = pendingTodoAgeMs(prospect, watchTask);
+    if (pendingAge !== null && pendingAge < 2 * 60 * 60 * 1e3) continue;
+    todos.push({
+      key: `pending-check-${prospect.id}`,
+      priority: prospect.pending_checked_at ? 60 : 50,
+      title: `Check pending connection for ${prospect.name}`,
+      detail: prospect.pending_checked_at ? `Last checked ${formatRelativeAge(prospect.pending_checked_at)}` : `Never checked · sent ${prospect.connection_sent_date || "unknown date"}`,
+      kind: "pending",
+      prospect
+    });
+  }
+  return todos.sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
+}
+function TodoItemRow({
+  item
+}) {
+  const icon = item.kind === "message" ? /* @__PURE__ */ jsx(Send, {
+    size: 18
+  }) : item.kind === "followup" ? /* @__PURE__ */ jsx(CalendarCheck, {
+    size: 18
+  }) : item.kind === "connection" ? /* @__PURE__ */ jsx(UserPlus, {
+    size: 18
+  }) : item.kind === "twitter" ? /* @__PURE__ */ jsx(AtSign, {
+    size: 18
+  }) : item.kind === "brief" ? /* @__PURE__ */ jsx(Link, {
+    size: 18
+  }) : /* @__PURE__ */ jsx(Clock, {
+    size: 18
+  });
+  return /* @__PURE__ */ jsxs("div", {
+    className: "grid gap-3 rounded-lg border border-stone-300 bg-white p-4 md:grid-cols-[1fr_auto] md:items-center",
+    children: [/* @__PURE__ */ jsx(Link$1, {
+      to: item.prospect ? `/prospects/${item.prospect.id}` : "/",
+      className: "block",
+      children: /* @__PURE__ */ jsx(TaskIntro, {
+        icon,
+        title: item.title,
+        detail: item.detail
+      })
+    }), /* @__PURE__ */ jsxs("div", {
+      className: "flex flex-wrap gap-2",
+      children: [item.prospect ? /* @__PURE__ */ jsx(ProfileButton, {
+        prospect: item.prospect
+      }) : null, item.kind === "message" && item.prospect?.post_acceptance_message ? /* @__PURE__ */ jsx(CopyButton$1, {
+        label: "Copy message",
+        value: item.prospect.post_acceptance_message
+      }) : null, item.kind === "message" && item.prospect ? /* @__PURE__ */ jsx(ActionButton$1, {
+        intent: "markReportSent",
+        prospectId: item.prospect.id,
+        label: "Mark sent",
+        icon: /* @__PURE__ */ jsx(Check, {
+          size: 16
+        }),
+        primary: true
+      }) : null, item.kind === "followup" && item.prospect ? /* @__PURE__ */ jsx(CopyButton$1, {
+        label: "Copy follow-up",
+        value: followupCopy(item.prospect, item.task)
+      }) : null, item.kind === "followup" && item.task?.prospect_id ? /* @__PURE__ */ jsx(ActionButton$1, {
+        intent: item.task.type === "send_twitter_followup" ? "markTwitterFollowupSent" : "markFollowupSent",
+        prospectId: item.task.prospect_id,
+        label: "Mark sent",
+        icon: /* @__PURE__ */ jsx(Check, {
+          size: 16
+        }),
+        primary: true
+      }) : null, item.kind === "connection" && item.prospect?.connection_message ? /* @__PURE__ */ jsx(CopyButton$1, {
+        label: "Copy note",
+        value: item.prospect.connection_message
+      }) : null, item.kind === "connection" && item.prospect ? /* @__PURE__ */ jsx(ActionButton$1, {
+        intent: "markConnectionSentWithNote",
+        prospectId: item.prospect.id,
+        label: "Sent with note",
+        icon: /* @__PURE__ */ jsx(Send, {
+          size: 16
+        }),
+        primary: true
+      }) : null, item.kind === "connection" && item.prospect ? /* @__PURE__ */ jsx(ActionButton$1, {
+        intent: "markConnectionSentWithoutNote",
+        prospectId: item.prospect.id,
+        label: "Sent without note",
+        icon: /* @__PURE__ */ jsx(UserCheck, {
+          size: 16
+        })
+      }) : null, item.kind === "twitter" && item.prospect?.twitter_dm_message ? /* @__PURE__ */ jsx(CopyButton$1, {
+        label: "Copy DM",
+        value: item.prospect.twitter_dm_message
+      }) : null, item.kind === "twitter" && item.prospect ? /* @__PURE__ */ jsx(ActionButton$1, {
+        intent: "markTwitterDmSent",
+        prospectId: item.prospect.id,
+        label: "Mark DM sent",
+        icon: /* @__PURE__ */ jsx(Send, {
+          size: 16
+        }),
+        primary: true
+      }) : null, item.kind === "pending" && item.prospect ? /* @__PURE__ */ jsx(ActionLink$1, {
+        href: item.prospect.profile_url,
+        label: "Check",
+        icon: /* @__PURE__ */ jsx(ExternalLink, {
+          size: 16
+        })
+      }) : null, item.kind === "brief" && item.prospect ? /* @__PURE__ */ jsxs(Link$1, {
+        to: `/prospects/${item.prospect.id}`,
+        className: "inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800 hover:border-teal-700",
+        children: [/* @__PURE__ */ jsx(Link, {
+          size: 16
+        }), "Add URL"]
+      }) : null]
+    })]
+  });
+}
+function ProfileButton({
+  prospect
+}) {
+  if (prospect.source_channel === "twitter") {
+    return /* @__PURE__ */ jsx("a", {
+      href: prospect.twitter_url || prospect.profile_url,
+      target: "_blank",
+      rel: "noreferrer",
+      "aria-label": `Open ${prospect.name} on X`,
+      title: "Open X profile",
+      className: "inline-flex min-h-10 min-w-10 items-center justify-center rounded-md border border-stone-900 bg-stone-900 px-3 text-sm font-black text-white hover:bg-stone-700",
+      children: "X"
+    });
+  }
+  return /* @__PURE__ */ jsx("a", {
+    href: prospect.profile_url,
+    target: "_blank",
+    rel: "noreferrer",
+    "aria-label": `Open ${prospect.name} on LinkedIn`,
+    title: "Open LinkedIn profile",
+    className: "inline-flex min-h-10 min-w-10 items-center justify-center rounded-md border border-[#0a66c2] bg-[#0a66c2] px-3 text-sm font-black text-white hover:bg-[#004182]",
+    children: "in"
+  });
+}
+function ActionLink$1({
+  href,
+  label,
+  icon
+}) {
+  return /* @__PURE__ */ jsxs("a", {
+    href,
+    target: "_blank",
+    rel: "noreferrer",
+    className: "inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800 hover:border-teal-700",
+    children: [icon, label]
+  });
+}
+function followupCopy(prospect, task) {
+  return task?.type === "send_twitter_followup" ? prospect.twitter_followup_message || prospect.followup_message || "" : prospect.followup_message || "";
+}
+function pendingTodoAgeMs(prospect, watchTask) {
+  if (prospect.pending_checked_at) return dateAgeMs(prospect.pending_checked_at);
+  if (watchTask?.created_at) return dateAgeMs(watchTask.created_at);
+  if (prospect.connection_sent_date && prospect.connection_sent_date < todayIsoClient()) return 2 * 60 * 60 * 1e3;
+  if (prospect.connection_sent_date) return 0;
+  return null;
+}
+function dateAgeMs(value) {
+  if (!value) return null;
+  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const timestamp = Date.parse(normalized);
+  if (Number.isNaN(timestamp)) return null;
+  return Date.now() - timestamp;
+}
+function formatRelativeAge(value) {
+  const ageMs = dateAgeMs(value);
+  if (ageMs === null) return value;
+  const minutes = Math.max(0, Math.round(ageMs / 6e4));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+function todayIsoClient() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Paris",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(/* @__PURE__ */ new Date());
 }
 function ProspectsTable({
   prospects
@@ -1404,7 +1774,9 @@ function ProspectsTable({
   });
 }
 function nextActionLabel(prospect) {
+  if (prospect.status === "to_contact" && prospect.source_channel === "twitter") return "Send Twitter/X DM";
   if (prospect.status === "to_contact" && prospect.contact_now) return "Send request with note or without note";
+  if (prospect.status === "twitter_contacted") return "Wait for Twitter/X follow-up";
   if (prospect.status === "connection_sent") return `${outreachModeLabel$1(prospect)} · watch acceptance`;
   if (prospect.status === "accepted") return "Send first message";
   if (prospect.status === "report_sent") return "Wait for follow-up";
@@ -1414,7 +1786,7 @@ function nextActionLabel(prospect) {
   if (prospect.status === "archived_declined" || prospect.status === "archived") return "Archived";
   return "Review";
 }
-function Metric$1({
+function Metric$2({
   label,
   value
 }) {
@@ -1528,8 +1900,57 @@ function Badge$3({
   });
 }
 function outreachModeLabel$1(prospect) {
+  if (prospect.source_channel === "twitter") return "Twitter/X";
   if (prospect.status === "to_contact") return "note optional";
   return prospect.outreach_mode === "no_note" ? "no note" : "with note";
+}
+function ActionButton$1({
+  intent,
+  prospectId,
+  label,
+  icon,
+  primary = false,
+  danger = false
+}) {
+  const className = primary ? "border-teal-700 bg-teal-700 text-white hover:bg-teal-800" : danger ? "border-stone-300 bg-white text-red-700 hover:border-red-300" : "border-stone-300 bg-white text-stone-800 hover:border-teal-700";
+  return /* @__PURE__ */ jsxs(FormShell, {
+    children: [/* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "intent",
+      value: intent
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "prospectId",
+      value: prospectId
+    }), /* @__PURE__ */ jsxs("button", {
+      className: `inline-flex min-h-10 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium ${className}`,
+      children: [icon, label]
+    })]
+  });
+}
+function CopyButton$1({
+  label,
+  value,
+  compact = false
+}) {
+  return /* @__PURE__ */ jsxs("button", {
+    type: "button",
+    className: `inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800 hover:border-teal-700 ${compact ? "min-h-8 px-2" : ""}`,
+    onClick: () => navigator.clipboard.writeText(value),
+    children: [/* @__PURE__ */ jsx(Clipboard, {
+      size: 16
+    }), label]
+  });
+}
+function FormShell({
+  children,
+  className
+}) {
+  return /* @__PURE__ */ jsx(Form, {
+    method: "post",
+    className,
+    children
+  });
 }
 function EmptyState$1() {
   return /* @__PURE__ */ jsx("div", {
@@ -1539,10 +1960,10 @@ function EmptyState$1() {
 }
 const route1 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  action: action$3,
+  action: action$5,
   default: home,
-  loader: loader$2,
-  meta: meta$4
+  loader: loader$3,
+  meta: meta$5
 }, Symbol.toStringTag, { value: "Module" }));
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(appDir, "..", "..", "..");
@@ -1593,6 +2014,52 @@ async function analyzeProspectTable(tableText) {
   }
   return normalizeAnalysis(parseJson(content), prospects.length);
 }
+async function analyzeTwitterProspectTable(tableText) {
+  loadLocalEnv();
+  const prospects = parseProspectTable(tableText);
+  if (prospects.length === 0) {
+    throw new Error("No Twitter/X prospects found. Add at least a name and profile URL or handle.");
+  }
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing OPENROUTER_API_KEY. Add it to your shell env before running npm run dev.");
+  }
+  const model = process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
+  const outreach = fs.readFileSync(path.join(docsDir, "outreach.md"), "utf8");
+  const brand = fs.readFileSync(path.join(docsDir, "brand.md"), "utf8");
+  const prompt = buildTwitterPrompt({ prospects, outreach, brand });
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:4377",
+      "X-Title": "Tempolis Outreach App"
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a strict JSON-producing public affairs outreach analyst. Return only valid JSON. Never include markdown."
+        },
+        { role: "user", content: prompt }
+      ]
+    })
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`OpenRouter request failed (${response.status}): ${detail.slice(0, 600)}`);
+  }
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error("OpenRouter returned an empty response.");
+  }
+  return normalizeTwitterAnalysis(parseJson(content), prospects.length);
+}
 function prospectEvidenceToTable(profile) {
   const evidence = [
     profile.signals,
@@ -1609,10 +2076,10 @@ function prospectEvidenceToTable(profile) {
     profile.about || "",
     evidence,
     profile.briefDirection || ""
-  ].map(cleanCell$1).join("	");
+  ].map(cleanCell$2).join("	");
   return [header.join("	"), row].join("\n");
 }
-function cleanCell$1(value) {
+function cleanCell$2(value) {
   return String(value || "").replace(/\t/g, " ").replace(/\r?\n/g, " ").trim();
 }
 function loadLocalEnv() {
@@ -1704,6 +2171,75 @@ PROSPECTS
 ${JSON.stringify(prospects, null, 2)}
 `;
 }
+function buildTwitterPrompt({ prospects, outreach, brand }) {
+  return `
+Analyze this new Tempolis Twitter/X outreach batch.
+
+CONTEXT
+This is not LinkedIn. We are testing Twitter/X as a manual acquisition channel. The app will help copy messages and track follow-ups, but it will not automate X.
+
+TASK
+- Classify every prospect as LEARN, WARM, SAVE or SKIP using the outreach playbook.
+- Assign a wave: 1 for immediate learning outreach, 2 for calibration, 3 for premium/saved prospects, null for SKIP.
+- Pick only the best first-wave LEARN profiles for contactToday=true.
+- Write all outreach messages in English by default.
+- Use brief topics of 1 to 3 words only.
+- A brief topic must be concrete: a figure, movement, issue, policy, controversy, narrative risk, public debate, or public discourse signal.
+- Never use vague discipline labels as briefTopic: "public policy", "policy", "communications", "public affairs", "EU affairs", "regulation", "strategy".
+- Treat Twitter activity carefully: posts, reposts, likes, follows and bio claims are signals of interest, not proof of professional ownership unless explicitly stated.
+- Do not say "your work on [topic]" unless the bio/about/role explicitly says they work on that topic.
+- For post-derived topics, use wording like "your recent posts on [topic]", "a topic you recently shared", or "given the policy issues visible in your feed".
+- Keep Twitter/X copy lighter and more direct than LinkedIn:
+  - twitterDmMessage: 4 lines max, no pitch, no demo/call ask, includes [shared link] on its own line if a brief is being sent.
+  - twitterDmMessage must explicitly connect the brief to one concrete source signal from the profile/feed.
+  - Preferred structure: "I prepared a short brief on [briefTopic], based on [specific signal from your bio/posts/feed]."
+  - The source signal should be specific but cautious: "your recent posts on...", "a topic you shared", "the policy signals in your feed", "your bio focus on...".
+  - Do not write vague copy like "I saw your recent interest in [topic]" unless the exact source signal is unclear.
+  - twitterFollowupMessage: one gentle follow-up at J+2 max.
+- If DMs may be closed, still generate a DM-style message that can be adapted as a reply after interaction.
+- Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format.
+- Ask for feedback on the angle, signal quality, or format. Do not ask for generic "thoughts".
+- Do not invent facts beyond the profile fields.
+
+OUTPUT JSON SHAPE
+{
+  "summary": {
+    "total": number,
+    "contactToday": number,
+    "wave2": number,
+    "saved": number,
+    "skipped": number
+  },
+  "prospects": [
+    {
+      "name": string,
+      "position": string,
+      "profileUrl": string,
+      "twitterHandle": string,
+      "about": string,
+      "priorityTag": "LEARN" | "WARM" | "SAVE" | "SKIP",
+      "wave": 1 | 2 | 3 | null,
+      "contactNow": boolean,
+      "rationale": string,
+      "briefTopic": string,
+      "briefPreparation": string,
+      "recommendedTemplate": string,
+      "twitterDmMessage": string,
+      "twitterFollowupMessage": string
+    }
+  ]
+}
+
+LINKEDIN PLAYBOOK TO ADAPT, NOT COPY LITERALLY
+${outreach}
+
+BRAND GUARDRAILS
+${brand.slice(0, 16e3)}
+
+TWITTER/X PROSPECTS
+${JSON.stringify(prospects, null, 2)}
+`;
+}
 function parseProspectTable(input) {
   const text = input.trim();
   if (!text) return [];
@@ -1780,6 +2316,18 @@ function normalizeAnalysis(value, total) {
   };
   return { summary, prospects };
 }
+function normalizeTwitterAnalysis(value, total) {
+  const input = value;
+  const prospects = Array.isArray(input.prospects) ? input.prospects.map(normalizeTwitterProspect).filter((item) => item.name && item.profileUrl) : [];
+  const summary = {
+    total,
+    contactToday: prospects.filter((item) => item.contactNow).length,
+    wave2: prospects.filter((item) => item.wave === 2).length,
+    saved: prospects.filter((item) => item.priorityTag === "SAVE").length,
+    skipped: prospects.filter((item) => item.priorityTag === "SKIP").length
+  };
+  return { summary, prospects };
+}
 function normalizeProspect(item) {
   const tag = ["LEARN", "WARM", "SAVE", "SKIP"].includes(String(item.priorityTag)) ? item.priorityTag : "SKIP";
   const wave = typeof item.wave === "number" ? item.wave : null;
@@ -1823,6 +2371,70 @@ I'm testing it with public affairs profiles before a proper launch. If the angle
     noNoteReportMessage,
     followupMessage
   };
+}
+function normalizeTwitterProspect(item) {
+  const base = normalizeProspect({
+    ...item,
+    connectionMessage: "",
+    reportMessage: "",
+    noNoteReportMessage: "",
+    followupMessage: item.twitterFollowupMessage || item.followupMessage || ""
+  });
+  const profileUrl = normalizeTwitterProfileUrl(item.profileUrl || item.twitterUrl || item.twitterHandle || "");
+  const first = clean(item.name).split(/\s+/)[0] || clean(item.name);
+  const topic = base.briefTopic || "Narrative risk";
+  return {
+    ...base,
+    profileUrl,
+    sourceChannel: "twitter",
+    twitterUrl: profileUrl,
+    twitterHandle: normalizeTwitterHandle(item.twitterHandle || profileUrl),
+    twitterDmMessage: sanitizeTwitterDm(
+      enforceEnglish(clean(item.twitterDmMessage), twitterDmFallback(first, topic, item)),
+      twitterDmFallback(first, topic, item)
+    ),
+    twitterFollowupMessage: enforceEnglish(
+      clean(item.twitterFollowupMessage || item.followupMessage),
+      `Hi ${first}, quick follow-up in case the brief slipped through. Even a short read on whether the angle is useful would help.`
+    )
+  };
+}
+function normalizeTwitterProfileUrl(value) {
+  const handle = normalizeTwitterHandle(value);
+  return handle ? `https://x.com/${handle}` : clean(value);
+}
+function twitterDmFallback(firstName2, topic, item) {
+  const signal = twitterSourceSignal(item);
+  return `Hi ${firstName2}, I'm building Tempolis and testing a short public affairs brief format.
+
+I prepared one on ${topic}, based on ${signal}.
+
+[shared link]
+
+Would your read be that the angle and signal are useful, or off?`;
+}
+function twitterSourceSignal(item) {
+  const evidence = clean([item.briefPreparation, item.rationale, item.about, item.recommendedTemplate].filter(Boolean).join(" "));
+  if (/\bbio\b/i.test(evidence)) return "the policy focus in your bio";
+  if (/\b(post|tweet|thread)\b/i.test(evidence)) return "the policy signals in your recent posts";
+  if (/\b(repost|shared|activity|feed)\b/i.test(evidence)) return "a topic visible in your recent activity";
+  if (/\b(journalist|reporter|editor|coverage)\b/i.test(evidence)) return "the themes visible in your coverage";
+  if (/\b(policy|public affairs|regulation|eu|brussels)\b/i.test(evidence)) return "the policy themes visible on your profile";
+  return "the public signals visible on your profile";
+}
+function sanitizeTwitterDm(value, fallback) {
+  const cleanValue = value.trim();
+  if (!cleanValue) return fallback;
+  if (/\brecent interest in\b/i.test(cleanValue) && !/\bbased on\b/i.test(cleanValue)) return fallback;
+  if (!/\[shared link\]/i.test(cleanValue)) return fallback;
+  if (/\byour work on\b/i.test(cleanValue) && /\b(repost|shared|activity|feed)\b/i.test(cleanValue)) return fallback;
+  return cleanValue;
+}
+function normalizeTwitterHandle(value) {
+  const trimmed = clean(value);
+  const match = trimmed.match(/(?:x\.com|twitter\.com)\/@?([^/?#\s]+)/i);
+  const raw = match?.[1] || trimmed.replace(/^@/, "");
+  return raw && !/^https?:\/\//i.test(raw) ? raw.replace(/[^a-zA-Z0-9_]/g, "") : "";
 }
 function enforceEnglish(value, fallback) {
   if (!value) return fallback;
@@ -1895,13 +2507,13 @@ function normalizeHeader(value) {
 function clean(value) {
   return String(value || "").trim();
 }
-const meta$3 = () => [{
+const meta$4 = () => [{
   title: "New batch · Tempolis Outreach"
 }, {
   name: "description",
   content: "Analyze a pasted LinkedIn outreach batch with OpenRouter."
 }];
-async function action$2({
+async function action$4({
   request
 }) {
   const formData = await request.formData();
@@ -1944,7 +2556,7 @@ const batch = UNSAFE_withComponentProps(function Batch() {
     signals: "",
     briefDirection: ""
   }]);
-  const tablePayload = toTsv(rows);
+  const tablePayload = toTsv$1(rows);
   return /* @__PURE__ */ jsx("main", {
     className: "min-h-screen bg-stone-100 px-4 py-8 text-stone-950 sm:px-6 lg:px-8",
     children: /* @__PURE__ */ jsxs("div", {
@@ -2105,11 +2717,11 @@ const batch = UNSAFE_withComponentProps(function Batch() {
           }), /* @__PURE__ */ jsxs("div", {
             className: "flex flex-wrap items-center gap-3",
             children: [/* @__PURE__ */ jsxs("button", {
-              disabled: rows.filter(isFilledRow).length === 0,
+              disabled: rows.filter(isFilledRow$1).length === 0,
               className: "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-4 font-medium text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:border-stone-300 disabled:bg-stone-300",
               children: [/* @__PURE__ */ jsx(Brain, {
                 size: 18
-              }), "Analyze ", rows.filter(isFilledRow).length || "", " and import"]
+              }), "Analyze ", rows.filter(isFilledRow$1).length || "", " and import"]
             }), /* @__PURE__ */ jsx("p", {
               className: "text-sm text-stone-600",
               children: "Requires `OPENROUTER_API_KEY` in the shell running the app."
@@ -2125,7 +2737,7 @@ const batch = UNSAFE_withComponentProps(function Batch() {
           className: "mt-2 text-sm",
           children: actionData.error
         })]
-      }) : null, actionData?.ok ? /* @__PURE__ */ jsx(Results, {
+      }) : null, actionData?.ok ? /* @__PURE__ */ jsx(Results$1, {
         analysis: actionData.analysis
       }) : null]
     })
@@ -2152,18 +2764,18 @@ function CellInput({
     className: "min-h-10 w-full rounded-md border border-stone-300 bg-stone-50 px-3 outline-none focus:border-teal-700"
   });
 }
-function toTsv(rows) {
+function toTsv$1(rows) {
   const header = ["Name", "Position", "Profile URL", "About", "Signals", "Brief direction"];
-  const body = rows.filter(isFilledRow).map((row) => [row.name, row.position, row.profileUrl, row.about, row.signals, row.briefDirection].map(cleanCell).join("	"));
+  const body = rows.filter(isFilledRow$1).map((row) => [row.name, row.position, row.profileUrl, row.about, row.signals, row.briefDirection].map(cleanCell$1).join("	"));
   return [header.join("	"), ...body].join("\n");
 }
-function cleanCell(value) {
+function cleanCell$1(value) {
   return value.replace(/\t/g, " ").replace(/\r?\n/g, " ").trim();
 }
-function isFilledRow(row) {
+function isFilledRow$1(row) {
   return Boolean(row.name.trim() || row.position.trim() || row.profileUrl.trim() || row.about.trim() || row.signals.trim() || row.briefDirection.trim());
 }
-function Results({
+function Results$1({
   analysis
 }) {
   const toContact = analysis.prospects.filter((item) => item.contactNow);
@@ -2172,19 +2784,19 @@ function Results({
     className: "mt-6 grid gap-6",
     children: [/* @__PURE__ */ jsxs("div", {
       className: "grid gap-3 sm:grid-cols-2 lg:grid-cols-5",
-      children: [/* @__PURE__ */ jsx(Metric, {
+      children: [/* @__PURE__ */ jsx(Metric$1, {
         label: "Total",
         value: analysis.summary.total
-      }), /* @__PURE__ */ jsx(Metric, {
+      }), /* @__PURE__ */ jsx(Metric$1, {
         label: "Connect today",
         value: analysis.summary.contactToday
-      }), /* @__PURE__ */ jsx(Metric, {
+      }), /* @__PURE__ */ jsx(Metric$1, {
         label: "Wave 2",
         value: analysis.summary.wave2
-      }), /* @__PURE__ */ jsx(Metric, {
+      }), /* @__PURE__ */ jsx(Metric$1, {
         label: "Saved",
         value: analysis.summary.saved
-      }), /* @__PURE__ */ jsx(Metric, {
+      }), /* @__PURE__ */ jsx(Metric$1, {
         label: "Skipped",
         value: analysis.summary.skipped
       })]
@@ -2197,9 +2809,9 @@ function Results({
         }), "Actions for today"]
       }), /* @__PURE__ */ jsx("div", {
         className: "mt-4 grid gap-3",
-        children: toContact.length ? toContact.map((prospect) => /* @__PURE__ */ jsx(ActionCard, {
+        children: toContact.length ? toContact.map((prospect) => /* @__PURE__ */ jsx(ActionCard$1, {
           prospect
-        }, prospect.profileUrl)) : /* @__PURE__ */ jsx(Empty, {
+        }, prospect.profileUrl)) : /* @__PURE__ */ jsx(Empty$1, {
           text: "No first-wave contact recommended in this batch."
         })
       })]
@@ -2212,7 +2824,7 @@ function Results({
         className: "mt-4 grid gap-3",
         children: wave2.length ? wave2.map((prospect) => /* @__PURE__ */ jsx(MiniCard, {
           prospect
-        }, prospect.profileUrl)) : /* @__PURE__ */ jsx(Empty, {
+        }, prospect.profileUrl)) : /* @__PURE__ */ jsx(Empty$1, {
           text: "No wave 2 profiles."
         })
       })]
@@ -2232,7 +2844,7 @@ function Results({
     })]
   });
 }
-function ActionCard({
+function ActionCard$1({
   prospect
 }) {
   return /* @__PURE__ */ jsxs("article", {
@@ -2263,16 +2875,16 @@ function ActionCard({
         rel: "noreferrer",
         children: "LinkedIn"
       })]
-    }), /* @__PURE__ */ jsx(Message, {
+    }), /* @__PURE__ */ jsx(Message$1, {
       title: "Connection note",
       value: prospect.connectionMessage
-    }), /* @__PURE__ */ jsx(Message, {
+    }), /* @__PURE__ */ jsx(Message$1, {
       title: "After acceptance, with note",
       value: prospect.reportMessage
-    }), /* @__PURE__ */ jsx(Message, {
+    }), /* @__PURE__ */ jsx(Message$1, {
       title: "After acceptance, without note",
       value: prospect.noNoteReportMessage
-    }), /* @__PURE__ */ jsx(Message, {
+    }), /* @__PURE__ */ jsx(Message$1, {
       title: "Follow-up J+2",
       value: prospect.followupMessage
     })]
@@ -2307,6 +2919,405 @@ function MiniCard({
         }) : null]
       })]
     })
+  });
+}
+function Message$1({
+  title,
+  value
+}) {
+  if (!value) return null;
+  return /* @__PURE__ */ jsxs("div", {
+    className: "mt-3 border-t border-stone-200 pt-3",
+    children: [/* @__PURE__ */ jsxs("div", {
+      className: "flex items-center justify-between gap-3",
+      children: [/* @__PURE__ */ jsx("p", {
+        className: "text-sm font-semibold",
+        children: title
+      }), /* @__PURE__ */ jsxs("button", {
+        type: "button",
+        onClick: () => navigator.clipboard.writeText(value),
+        className: "inline-flex min-h-8 items-center gap-2 rounded-md border border-stone-300 bg-white px-2 text-sm font-medium hover:border-teal-700",
+        children: [/* @__PURE__ */ jsx(Clipboard, {
+          size: 14
+        }), "Copy"]
+      })]
+    }), /* @__PURE__ */ jsx("p", {
+      className: "mt-2 whitespace-pre-wrap rounded-md border border-stone-200 bg-white p-3 text-sm text-stone-700",
+      children: value
+    })]
+  });
+}
+function Metric$1({
+  label,
+  value
+}) {
+  return /* @__PURE__ */ jsxs("div", {
+    className: "rounded-lg border border-stone-300 bg-white p-4",
+    children: [/* @__PURE__ */ jsx("p", {
+      className: "text-sm text-stone-600",
+      children: label
+    }), /* @__PURE__ */ jsx("p", {
+      className: "mt-1 text-3xl font-semibold",
+      children: value
+    })]
+  });
+}
+function Badge$2({
+  children
+}) {
+  return /* @__PURE__ */ jsx("span", {
+    className: "inline-flex min-h-6 items-center rounded-full bg-teal-50 px-2.5 text-xs font-semibold text-teal-800",
+    children
+  });
+}
+function Empty$1({
+  text
+}) {
+  return /* @__PURE__ */ jsx("div", {
+    className: "rounded-lg border border-dashed border-stone-300 p-4 text-sm text-stone-500",
+    children: text
+  });
+}
+const route2 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  action: action$4,
+  default: batch,
+  meta: meta$4
+}, Symbol.toStringTag, { value: "Module" }));
+const emptyRow = {
+  name: "",
+  position: "",
+  profileUrl: "",
+  about: "",
+  signals: "",
+  briefDirection: ""
+};
+const meta$3 = () => [{
+  title: "Twitter/X batch · Tempolis Outreach"
+}, {
+  name: "description",
+  content: "Analyze Twitter/X prospects with OpenRouter."
+}];
+async function action$3({
+  request
+}) {
+  const formData = await request.formData();
+  const table = String(formData.get("table") || "");
+  try {
+    const analysis = await analyzeTwitterProspectTable(table);
+    await importAnalyzedProspects(analysis.prospects);
+    return {
+      ok: true,
+      analysis
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+}
+const twitter = UNSAFE_withComponentProps(function TwitterBatch() {
+  const actionData = useActionData();
+  const [rows, setRows] = useState([{
+    ...emptyRow
+  }, {
+    ...emptyRow
+  }, {
+    ...emptyRow
+  }]);
+  const tablePayload = toTsv(rows);
+  const filledRows = rows.filter(isFilledRow);
+  return /* @__PURE__ */ jsx("main", {
+    className: "min-h-screen bg-stone-100 px-4 py-8 text-stone-950 sm:px-6 lg:px-8",
+    children: /* @__PURE__ */ jsxs("div", {
+      className: "mx-auto max-w-6xl",
+      children: [/* @__PURE__ */ jsxs("header", {
+        className: "flex flex-col gap-4 border-b border-stone-300 pb-6 md:flex-row md:items-end md:justify-between",
+        children: [/* @__PURE__ */ jsxs("div", {
+          children: [/* @__PURE__ */ jsxs(Link$1, {
+            to: "/",
+            className: "inline-flex items-center gap-2 text-sm font-medium text-teal-700 hover:text-teal-900",
+            children: [/* @__PURE__ */ jsx(ArrowLeft, {
+              size: 16
+            }), "Dashboard"]
+          }), /* @__PURE__ */ jsx("h1", {
+            className: "mt-3 text-4xl font-semibold tracking-normal",
+            children: "Twitter/X prospects"
+          }), /* @__PURE__ */ jsx("p", {
+            className: "mt-2 max-w-2xl text-stone-600",
+            children: "Add public X profiles, visible posts and signals. The app classifies them, generates a DM-style first touch, and saves the process to the CRM."
+          })]
+        }), /* @__PURE__ */ jsxs("div", {
+          className: "rounded-lg border border-stone-300 bg-white px-4 py-3 text-sm text-stone-600",
+          children: ["Channel: ", /* @__PURE__ */ jsx("span", {
+            className: "font-semibold text-stone-900",
+            children: "Twitter/X"
+          })]
+        })]
+      }), /* @__PURE__ */ jsx("section", {
+        className: "mt-6 rounded-lg border border-stone-300 bg-white p-5",
+        children: /* @__PURE__ */ jsxs(Form, {
+          method: "post",
+          className: "grid gap-4",
+          children: [/* @__PURE__ */ jsx("input", {
+            type: "hidden",
+            name: "table",
+            value: tablePayload
+          }), /* @__PURE__ */ jsxs("div", {
+            className: "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between",
+            children: [/* @__PURE__ */ jsxs("div", {
+              children: [/* @__PURE__ */ jsx("h2", {
+                className: "font-semibold",
+                children: "Profiles"
+              }), /* @__PURE__ */ jsx("p", {
+                className: "text-sm text-stone-600",
+                children: "One row per X profile. Use posts/signals to help the model pick a sharper brief topic."
+              })]
+            }), /* @__PURE__ */ jsxs("button", {
+              type: "button",
+              onClick: () => setRows((current) => [...current, {
+                ...emptyRow
+              }]),
+              className: "inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 font-medium hover:border-teal-700",
+              children: [/* @__PURE__ */ jsx(Plus, {
+                size: 16
+              }), "Add row"]
+            })]
+          }), /* @__PURE__ */ jsx("div", {
+            className: "overflow-x-auto rounded-lg border border-stone-300",
+            children: /* @__PURE__ */ jsxs("table", {
+              className: "min-w-[1480px] w-full border-collapse bg-white text-sm",
+              children: [/* @__PURE__ */ jsx("thead", {
+                className: "bg-stone-50 text-left text-xs font-bold uppercase text-stone-500",
+                children: /* @__PURE__ */ jsxs("tr", {
+                  children: [/* @__PURE__ */ jsx("th", {
+                    className: "w-[170px] border-b border-stone-300 px-3 py-2",
+                    children: "Name"
+                  }), /* @__PURE__ */ jsx("th", {
+                    className: "w-[250px] border-b border-stone-300 px-3 py-2",
+                    children: "Role / context"
+                  }), /* @__PURE__ */ jsx("th", {
+                    className: "w-[250px] border-b border-stone-300 px-3 py-2",
+                    children: "X URL or handle"
+                  }), /* @__PURE__ */ jsx("th", {
+                    className: "w-[300px] border-b border-stone-300 px-3 py-2",
+                    children: "Bio / about"
+                  }), /* @__PURE__ */ jsx("th", {
+                    className: "w-[340px] border-b border-stone-300 px-3 py-2",
+                    children: "Posts / signals"
+                  }), /* @__PURE__ */ jsx("th", {
+                    className: "w-[190px] border-b border-stone-300 px-3 py-2",
+                    children: "Brief direction"
+                  }), /* @__PURE__ */ jsx("th", {
+                    className: "w-[56px] border-b border-stone-300 px-3 py-2"
+                  })]
+                })
+              }), /* @__PURE__ */ jsx("tbody", {
+                children: rows.map((row, index) => /* @__PURE__ */ jsxs("tr", {
+                  className: "align-top",
+                  children: [/* @__PURE__ */ jsx(Cell, {
+                    row,
+                    index,
+                    field: "name",
+                    placeholder: "Jane Doe",
+                    update: updateRow
+                  }), /* @__PURE__ */ jsx(Cell, {
+                    row,
+                    index,
+                    field: "position",
+                    placeholder: "EU policy analyst, journalist...",
+                    update: updateRow
+                  }), /* @__PURE__ */ jsx(Cell, {
+                    row,
+                    index,
+                    field: "profileUrl",
+                    placeholder: "@handle or https://x.com/handle",
+                    update: updateRow
+                  }), /* @__PURE__ */ jsx(TextCell, {
+                    row,
+                    index,
+                    field: "about",
+                    placeholder: "Bio, public role, org, topics...",
+                    update: updateRow
+                  }), /* @__PURE__ */ jsx(TextCell, {
+                    row,
+                    index,
+                    field: "signals",
+                    placeholder: "Recent posts, reposts, recurring themes, public threads...",
+                    update: updateRow
+                  }), /* @__PURE__ */ jsx(Cell, {
+                    row,
+                    index,
+                    field: "briefDirection",
+                    placeholder: "AI Act, migration...",
+                    update: updateRow
+                  }), /* @__PURE__ */ jsx("td", {
+                    className: "border-b border-stone-200 p-2",
+                    children: /* @__PURE__ */ jsx("button", {
+                      type: "button",
+                      onClick: () => setRows((current) => current.filter((_, rowIndex) => rowIndex !== index)),
+                      disabled: rows.length === 1,
+                      "aria-label": "Remove row",
+                      className: "inline-flex size-10 items-center justify-center rounded-md border border-stone-300 bg-white text-red-700 hover:border-red-300 disabled:cursor-not-allowed disabled:opacity-40",
+                      children: /* @__PURE__ */ jsx(Trash2, {
+                        size: 16
+                      })
+                    })
+                  })]
+                }, index))
+              })]
+            })
+          }), /* @__PURE__ */ jsxs("div", {
+            className: "flex flex-wrap items-center gap-3",
+            children: [/* @__PURE__ */ jsxs("button", {
+              disabled: filledRows.length === 0,
+              className: "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-4 font-medium text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:border-stone-300 disabled:bg-stone-300",
+              children: [/* @__PURE__ */ jsx(Brain, {
+                size: 18
+              }), "Analyze ", filledRows.length || "", " and import"]
+            }), /* @__PURE__ */ jsx("p", {
+              className: "text-sm text-stone-600",
+              children: "Manual X workflow: the app prepares copy and tracking, you send."
+            })]
+          })]
+        })
+      }), actionData?.ok === false ? /* @__PURE__ */ jsxs("section", {
+        className: "mt-6 rounded-lg border border-red-300 bg-white p-5 text-red-800",
+        children: [/* @__PURE__ */ jsx("h2", {
+          className: "text-lg font-semibold",
+          children: "Analysis failed"
+        }), /* @__PURE__ */ jsx("p", {
+          className: "mt-2 text-sm",
+          children: actionData.error
+        })]
+      }) : null, actionData?.ok ? /* @__PURE__ */ jsx(Results, {
+        analysis: actionData.analysis
+      }) : null]
+    })
+  });
+  function updateRow(index, field, value) {
+    setRows((current) => current.map((row, rowIndex) => rowIndex === index ? {
+      ...row,
+      [field]: value
+    } : row));
+  }
+});
+function Cell({
+  row,
+  index,
+  field,
+  placeholder,
+  update
+}) {
+  return /* @__PURE__ */ jsx("td", {
+    className: "border-b border-stone-200 p-2",
+    children: /* @__PURE__ */ jsx("input", {
+      value: row[field],
+      onChange: (event) => update(index, field, event.target.value),
+      placeholder,
+      className: "min-h-10 w-full rounded-md border border-stone-300 bg-stone-50 px-3 outline-none focus:border-teal-700"
+    })
+  });
+}
+function TextCell({
+  row,
+  index,
+  field,
+  placeholder,
+  update
+}) {
+  return /* @__PURE__ */ jsx("td", {
+    className: "border-b border-stone-200 p-2",
+    children: /* @__PURE__ */ jsx("textarea", {
+      value: row[field],
+      onChange: (event) => update(index, field, event.target.value),
+      rows: 2,
+      placeholder,
+      className: "min-h-20 w-full resize-y rounded-md border border-stone-300 bg-stone-50 px-3 py-2 outline-none focus:border-teal-700"
+    })
+  });
+}
+function Results({
+  analysis
+}) {
+  const toContact = analysis.prospects.filter((item) => item.contactNow);
+  return /* @__PURE__ */ jsxs("section", {
+    className: "mt-6 grid gap-6",
+    children: [/* @__PURE__ */ jsxs("div", {
+      className: "grid gap-3 sm:grid-cols-2 lg:grid-cols-5",
+      children: [/* @__PURE__ */ jsx(Metric, {
+        label: "Total",
+        value: analysis.summary.total
+      }), /* @__PURE__ */ jsx(Metric, {
+        label: "DM today",
+        value: analysis.summary.contactToday
+      }), /* @__PURE__ */ jsx(Metric, {
+        label: "Wave 2",
+        value: analysis.summary.wave2
+      }), /* @__PURE__ */ jsx(Metric, {
+        label: "Saved",
+        value: analysis.summary.saved
+      }), /* @__PURE__ */ jsx(Metric, {
+        label: "Skipped",
+        value: analysis.summary.skipped
+      })]
+    }), /* @__PURE__ */ jsxs("div", {
+      className: "rounded-lg border border-stone-300 bg-white p-5",
+      children: [/* @__PURE__ */ jsxs("h2", {
+        className: "flex items-center gap-2 text-xl font-semibold",
+        children: [/* @__PURE__ */ jsx(Send, {
+          size: 20
+        }), "Twitter/X actions"]
+      }), /* @__PURE__ */ jsx("div", {
+        className: "mt-4 grid gap-3",
+        children: toContact.length ? toContact.map((prospect) => /* @__PURE__ */ jsx(ActionCard, {
+          prospect
+        }, prospect.profileUrl)) : /* @__PURE__ */ jsx(Empty, {
+          text: "No Twitter/X contact recommended in this batch."
+        })
+      })]
+    })]
+  });
+}
+function ActionCard({
+  prospect
+}) {
+  return /* @__PURE__ */ jsxs("article", {
+    className: "rounded-lg border border-stone-200 bg-stone-50 p-4",
+    children: [/* @__PURE__ */ jsxs("div", {
+      className: "flex flex-col gap-3 md:flex-row md:items-start md:justify-between",
+      children: [/* @__PURE__ */ jsxs("div", {
+        children: [/* @__PURE__ */ jsx("h3", {
+          className: "font-semibold",
+          children: prospect.name
+        }), /* @__PURE__ */ jsx("p", {
+          className: "text-sm text-stone-600",
+          children: prospect.position
+        }), /* @__PURE__ */ jsxs("p", {
+          className: "mt-2 text-sm",
+          children: ["Brief: ", /* @__PURE__ */ jsx("span", {
+            className: "font-semibold",
+            children: prospect.briefTopic
+          })]
+        }), /* @__PURE__ */ jsx("p", {
+          className: "mt-1 text-sm text-stone-600",
+          children: prospect.rationale
+        })]
+      }), /* @__PURE__ */ jsx("a", {
+        className: "text-sm font-medium text-teal-700 hover:text-teal-900",
+        href: prospect.profileUrl,
+        target: "_blank",
+        rel: "noreferrer",
+        children: "X profile"
+      })]
+    }), /* @__PURE__ */ jsx(Message, {
+      title: "DM / first touch",
+      value: prospect.twitterDmMessage || ""
+    }), /* @__PURE__ */ jsx(Message, {
+      title: "Follow-up J+2",
+      value: prospect.twitterFollowupMessage || prospect.followupMessage
+    })]
   });
 }
 function Message({
@@ -2350,14 +3361,6 @@ function Metric({
     })]
   });
 }
-function Badge$2({
-  children
-}) {
-  return /* @__PURE__ */ jsx("span", {
-    className: "inline-flex min-h-6 items-center rounded-full bg-teal-50 px-2.5 text-xs font-semibold text-teal-800",
-    children
-  });
-}
 function Empty({
   text
 }) {
@@ -2366,10 +3369,21 @@ function Empty({
     children: text
   });
 }
-const route2 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+function toTsv(rows) {
+  const header = ["Name", "Position", "Profile URL", "About", "Signals", "Brief direction"];
+  const body = rows.filter(isFilledRow).map((row) => [row.name, row.position, row.profileUrl, row.about, row.signals, row.briefDirection].map(cleanCell).join("	"));
+  return [header.join("	"), ...body].join("\n");
+}
+function cleanCell(value) {
+  return value.replace(/\t/g, " ").replace(/\r?\n/g, " ").trim();
+}
+function isFilledRow(row) {
+  return Boolean(row.name.trim() || row.position.trim() || row.profileUrl.trim() || row.about.trim() || row.signals.trim() || row.briefDirection.trim());
+}
+const route3 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  action: action$2,
-  default: batch,
+  action: action$3,
+  default: twitter,
   meta: meta$3
 }, Symbol.toStringTag, { value: "Module" }));
 const groups = [{
@@ -2612,19 +3626,19 @@ function SearchCard({
     })]
   });
 }
-const route3 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route4 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   default: discover,
   meta: meta$2
 }, Symbol.toStringTag, { value: "Module" }));
-const statuses = ["all", "to_contact", "connection_sent", "accepted", "report_sent", "followup_sent", "saved_for_later", "skipped", "archived_declined"];
+const statuses = ["all", "to_contact", "connection_sent", "twitter_contacted", "accepted", "report_sent", "followup_sent", "saved_for_later", "skipped", "archived_declined"];
 const meta$1 = () => [{
   title: "Search CRM · Tempolis Outreach"
 }, {
   name: "description",
   content: "Search prospects already stored in the outreach CRM."
 }];
-async function loader$1() {
+async function loader$2() {
   return await getDashboard();
 }
 const search = UNSAFE_withComponentProps(function SearchCrmPage() {
@@ -2675,7 +3689,7 @@ const search = UNSAFE_withComponentProps(function SearchCrmPage() {
               }), /* @__PURE__ */ jsx("input", {
                 value: query,
                 onChange: (event) => updateParams(setParams, event.target.value, status),
-                placeholder: "Name, company, LinkedIn URL, topic, status...",
+                placeholder: "Name, company, profile URL, topic, status...",
                 className: "min-h-11 w-full rounded-md border border-stone-300 bg-stone-50 pl-10 pr-3 outline-none focus:border-teal-700"
               })]
             })]
@@ -2767,10 +3781,10 @@ const search = UNSAFE_withComponentProps(function SearchCrmPage() {
                   className: "border-b border-stone-200 px-4 py-3",
                   children: /* @__PURE__ */ jsxs("a", {
                     className: "inline-flex items-center gap-1 text-teal-700 hover:text-teal-900",
-                    href: prospect.profile_url,
+                    href: prospect.twitter_url || prospect.profile_url,
                     target: "_blank",
                     rel: "noreferrer",
-                    children: ["LinkedIn", /* @__PURE__ */ jsx(ExternalLink, {
+                    children: [prospect.source_channel === "twitter" ? "X" : "LinkedIn", /* @__PURE__ */ jsx(ExternalLink, {
                       size: 14
                     })]
                   })
@@ -2791,7 +3805,7 @@ function filterProspects(prospects, query, status) {
   return prospects.filter((prospect) => {
     if (status !== "all" && prospect.status !== status) return false;
     if (terms.length === 0) return true;
-    const haystack = [prospect.name, prospect.position, prospect.profile_url, prospect.about, prospect.priority_tag, prospect.status, prospect.brief_topic, prospect.rationale, prospect.notes].filter(Boolean).join(" ").toLowerCase();
+    const haystack = [prospect.name, prospect.position, prospect.profile_url, prospect.twitter_url, prospect.twitter_handle, prospect.source_channel, prospect.about, prospect.priority_tag, prospect.status, prospect.brief_topic, prospect.rationale, prospect.notes].filter(Boolean).join(" ").toLowerCase();
     return terms.every((term) => haystack.includes(term));
   });
 }
@@ -2811,11 +3825,113 @@ function Badge$1({
     children
   });
 }
-const route4 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route5 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   default: search,
-  loader: loader$1,
+  loader: loader$2,
   meta: meta$1
+}, Symbol.toStringTag, { value: "Module" }));
+async function loader$1({
+  request
+}) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders$2()
+    });
+  }
+  const dashboard = await getExtensionDashboard();
+  return data({
+    ok: true,
+    ...dashboard
+  }, {
+    headers: corsHeaders$2()
+  });
+}
+function corsHeaders$2() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
+}
+const route6 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  loader: loader$1
+}, Symbol.toStringTag, { value: "Module" }));
+async function action$2({
+  request
+}) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders$1()
+    });
+  }
+  if (request.method !== "POST") {
+    return data({
+      ok: false,
+      error: "Method not allowed"
+    }, {
+      status: 405,
+      headers: corsHeaders$1()
+    });
+  }
+  const payload = await readPayload$1(request);
+  const id = Number(payload.id);
+  if (!id) {
+    return data({
+      ok: false,
+      error: "Missing prospect id"
+    }, {
+      status: 400,
+      headers: corsHeaders$1()
+    });
+  }
+  if (payload.state === "unknown") {
+    return data({
+      ok: true,
+      synced: false
+    }, {
+      headers: corsHeaders$1()
+    });
+  }
+  if (!["accepted", "declined", "pending"].includes(String(payload.state))) {
+    return data({
+      ok: false,
+      error: "Unknown connection state"
+    }, {
+      status: 400,
+      headers: corsHeaders$1()
+    });
+  }
+  await syncProspectConnectionState(id, payload.state);
+  return data({
+    ok: true,
+    synced: true,
+    state: payload.state
+  }, {
+    headers: corsHeaders$1()
+  });
+}
+function corsHeaders$1() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
+}
+async function readPayload$1(request) {
+  const contentType = request.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return await request.json();
+  }
+  const text = await request.text();
+  return JSON.parse(text);
+}
+const route7 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  action: action$2
 }, Symbol.toStringTag, { value: "Module" }));
 async function action$1({
   request
@@ -2836,6 +3952,9 @@ async function action$1({
     });
   }
   const payload = await readPayload(request);
+  if (payload.sourceChannel === "twitter") {
+    return handleTwitterPayload(payload);
+  }
   const profileUrl = normalizeLinkedInUrl(String(payload.profileUrl || ""));
   if (!profileUrl.includes("linkedin.com/in/")) {
     return data({
@@ -2870,6 +3989,40 @@ async function action$1({
   await setProspectOutreachPreference(id, normalizeOutreachMode(payload.outreachMode));
   return respond(payload, id, false);
 }
+async function handleTwitterPayload(payload) {
+  const profileUrl = normalizeTwitterUrl(String(payload.profileUrl || payload.twitterUrl || payload.twitterHandle || ""));
+  if (!profileUrl.includes("x.com/") && !profileUrl.includes("twitter.com/")) {
+    return data({
+      ok: false,
+      error: "Open a Twitter/X profile page first."
+    }, {
+      status: 400,
+      headers: corsHeaders()
+    });
+  }
+  const existingId = await findProspectByProfileUrl(profileUrl);
+  if (existingId) {
+    return respond(payload, existingId, true);
+  }
+  const table = prospectEvidenceToTable({
+    ...payload,
+    profileUrl,
+    signals: [payload.signals, payload.activity ? `Visible posts: ${payload.activity}` : "", payload.rawText ? `Visible page text: ${payload.rawText}` : ""].filter(Boolean).join("\n\n")
+  });
+  const analysis = await analyzeTwitterProspectTable(table);
+  await importAnalyzedProspects(analysis.prospects);
+  const id = await findProspectByProfileUrl(profileUrl);
+  if (!id) {
+    return data({
+      ok: false,
+      error: "Twitter/X profile analyzed but not found after import."
+    }, {
+      status: 500,
+      headers: corsHeaders()
+    });
+  }
+  return respond(payload, id, false);
+}
 function respond(payload, id, existing) {
   if (payload.open) return redirect(`/prospects/${id}`);
   return data({
@@ -2883,6 +4036,14 @@ function respond(payload, id, existing) {
 }
 function normalizeLinkedInUrl(value) {
   return value.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
+}
+function normalizeTwitterUrl(value) {
+  const trimmed = value.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
+  const match = trimmed.match(/(?:x\.com|twitter\.com)\/@?([^/?#\s]+)/i);
+  const rawHandle = match?.[1] || trimmed.replace(/^@/, "");
+  const handle = rawHandle && !/^https?:\/\//i.test(rawHandle) ? rawHandle.replace(/[^a-zA-Z0-9_]/g, "") : "";
+  if (handle) return `https://x.com/${handle}`;
+  return trimmed;
 }
 function normalizeOutreachMode(value) {
   return value === "with_note" ? "with_note" : "no_note";
@@ -2902,7 +4063,7 @@ async function readPayload(request) {
   const text = await request.text();
   return JSON.parse(text);
 }
-const route5 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route8 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   action: action$1
 }, Symbol.toStringTag, { value: "Module" }));
@@ -2977,10 +4138,10 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
             children: prospect.position
           }), /* @__PURE__ */ jsxs("a", {
             className: "mt-3 inline-flex items-center gap-1 text-sm font-medium text-teal-700 hover:text-teal-900",
-            href: prospect.profile_url,
+            href: prospect.twitter_url || prospect.profile_url,
             target: "_blank",
             rel: "noreferrer",
-            children: ["LinkedIn profile", /* @__PURE__ */ jsx(ExternalLink, {
+            children: [prospect.source_channel === "twitter" ? "X profile" : "LinkedIn profile", /* @__PURE__ */ jsx(ExternalLink, {
               size: 14
             })]
           })]
@@ -2990,6 +4151,9 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
             children: prospect.priority_tag
           }), /* @__PURE__ */ jsxs(Badge, {
             children: ["Wave ", prospect.wave || "-"]
+          }), /* @__PURE__ */ jsx(Badge, {
+            tone: "blue",
+            children: prospect.source_channel === "twitter" ? "Twitter/X" : "LinkedIn"
           }), /* @__PURE__ */ jsx(Badge, {
             tone: prospect.outreach_mode === "no_note" ? "blue" : "green",
             children: outreachModeLabel(prospect)
@@ -3019,7 +4183,7 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
                 today
               }, task.id)) : /* @__PURE__ */ jsx(EmptyState, {})
             })]
-          }), /* @__PURE__ */ jsx(CollapsibleSection, {
+          }), prospect.source_channel === "linkedin" ? /* @__PURE__ */ jsx(CollapsibleSection, {
             title: "Outreach mode",
             detail: "Switch the copy strategy before sending.",
             defaultOpen: !archiveMode,
@@ -3054,7 +4218,7 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
                 })]
               })]
             })
-          }), /* @__PURE__ */ jsx(CollapsibleSection, {
+          }) : null, /* @__PURE__ */ jsx(CollapsibleSection, {
             title: "Brief",
             detail: "Topic, preparation notes and shared URL.",
             defaultOpen: !archiveMode,
@@ -3141,9 +4305,9 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
             })
           }), /* @__PURE__ */ jsxs(CollapsibleSection, {
             title: "Messages",
-            detail: "Copy exact LinkedIn copy.",
+            detail: prospect.source_channel === "twitter" ? "Copy exact Twitter/X copy." : "Copy exact LinkedIn copy.",
             defaultOpen: !archiveMode,
-            children: [/* @__PURE__ */ jsx("div", {
+            children: [prospect.source_channel === "linkedin" ? /* @__PURE__ */ jsx("div", {
               className: "mt-4 flex flex-wrap gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3",
               children: /* @__PURE__ */ jsx(ActionButton, {
                 intent: "regenerateSaferCopy",
@@ -3153,7 +4317,22 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
                   size: 16
                 })
               })
-            }), /* @__PURE__ */ jsxs("div", {
+            }) : null, prospect.source_channel === "twitter" ? /* @__PURE__ */ jsxs("div", {
+              className: "mt-4 grid gap-3",
+              children: [/* @__PURE__ */ jsx(MessageEditor, {
+                prospectId: prospect.id,
+                title: "Twitter/X DM",
+                type: "twitter_dm",
+                content: prospect.twitter_dm_message,
+                locked: Boolean(prospect.twitter_contacted_date)
+              }), /* @__PURE__ */ jsx(MessageEditor, {
+                prospectId: prospect.id,
+                title: "Twitter/X follow-up J+2",
+                type: "twitter_followup",
+                content: prospect.twitter_followup_message,
+                locked: Boolean(prospect.twitter_followup_sent_date)
+              })]
+            }) : /* @__PURE__ */ jsxs("div", {
               className: "mt-4 grid gap-3",
               children: [showConnectionNote ? /* @__PURE__ */ jsx(MessageEditor, {
                 prospectId: prospect.id,
@@ -3351,6 +4530,50 @@ function taskActions(task, prospect) {
         value: prospect.followup_message || ""
       }), /* @__PURE__ */ jsx(ActionButton, {
         intent: "markFollowupSent",
+        prospectId: prospect.id,
+        label: "Mark sent",
+        icon: /* @__PURE__ */ jsx(CalendarCheck, {
+          size: 16
+        }),
+        primary: true
+      })]
+    });
+  }
+  if (task.type === "send_twitter_dm") {
+    return /* @__PURE__ */ jsxs(Fragment, {
+      children: [/* @__PURE__ */ jsx(CopyButton, {
+        label: "Copy DM",
+        value: prospect.twitter_dm_message || ""
+      }), /* @__PURE__ */ jsx(ActionLink, {
+        href: prospect.twitter_url || prospect.profile_url,
+        label: "Open X",
+        icon: /* @__PURE__ */ jsx(AtSign, {
+          size: 16
+        })
+      }), /* @__PURE__ */ jsx(ActionButton, {
+        intent: "markTwitterDmSent",
+        prospectId: prospect.id,
+        label: "Mark DM sent",
+        icon: /* @__PURE__ */ jsx(Send, {
+          size: 16
+        }),
+        primary: true
+      })]
+    });
+  }
+  if (task.type === "send_twitter_followup") {
+    return /* @__PURE__ */ jsxs(Fragment, {
+      children: [/* @__PURE__ */ jsx(CopyButton, {
+        label: "Copy follow-up",
+        value: prospect.twitter_followup_message || ""
+      }), /* @__PURE__ */ jsx(ActionLink, {
+        href: prospect.twitter_url || prospect.profile_url,
+        label: "Open X",
+        icon: /* @__PURE__ */ jsx(AtSign, {
+          size: 16
+        })
+      }), /* @__PURE__ */ jsx(ActionButton, {
+        intent: "markTwitterFollowupSent",
         prospectId: prospect.id,
         label: "Mark sent",
         icon: /* @__PURE__ */ jsx(CalendarCheck, {
@@ -3653,6 +4876,7 @@ function Badge({
   });
 }
 function outreachModeLabel(prospect) {
+  if (prospect.source_channel === "twitter") return "Twitter/X";
   if (prospect.status === "to_contact") return "note optional";
   return prospect.outreach_mode === "no_note" ? "no note" : "with note";
 }
@@ -3746,20 +4970,33 @@ function CopyButton({
     }), label]
   });
 }
+function ActionLink({
+  href,
+  label,
+  icon
+}) {
+  return /* @__PURE__ */ jsxs("a", {
+    href,
+    target: "_blank",
+    rel: "noreferrer",
+    className: "inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800 hover:border-teal-700",
+    children: [icon, label]
+  });
+}
 function EmptyState() {
   return /* @__PURE__ */ jsx("div", {
     className: "rounded-lg border border-dashed border-stone-300 p-4 text-sm text-stone-500",
     children: "Nothing here."
   });
 }
-const route6 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route9 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   action,
   default: prospect_$id,
   loader,
   meta
 }, Symbol.toStringTag, { value: "Module" }));
-const serverManifest = { "entry": { "module": "/assets/entry.client-BxWr3UUB.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-BOsedW8b.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/createLucideIcon-Da8AtwYQ.js"], "css": ["/assets/root-dVqg4afR.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-DOLZ5VI6.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/search-B8EuDsim.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/plus-DekOuVBV.js", "/assets/external-link-D2Duvbm5.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/batch": { "id": "routes/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-BMfyDS67.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/plus-DekOuVBV.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/send-CLyZgDQb.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-vMK4XIAM.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/search-B8EuDsim.js", "/assets/external-link-D2Duvbm5.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/search": { "id": "routes/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-DsqpW5Fb.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/search-B8EuDsim.js", "/assets/external-link-D2Duvbm5.js", "/assets/createLucideIcon-Da8AtwYQ.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.prospect": { "id": "routes/api.extension.prospect", "parentId": "root", "path": "api/extension/prospect", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.prospect-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "root", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-Z5N0ydW6.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/external-link-D2Duvbm5.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/send-CLyZgDQb.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-4443a289.js", "version": "4443a289", "sri": void 0 };
+const serverManifest = { "entry": { "module": "/assets/entry.client-Mh2gPbg1.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-DOnnsevx.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": ["/assets/root-BITnZrfi.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-Dy_MxVXv.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/search-D8C4gO1s.js", "/assets/createLucideIcon-DE2VjKt3.js", "/assets/user-check-ClwYYjaz.js", "/assets/plus-B3ZS8NII.js", "/assets/send-BWLy2b3j.js", "/assets/external-link-CoUt5864.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/batch": { "id": "routes/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-Dsp8k5oY.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/plus-B3ZS8NII.js", "/assets/trash-2-BA1jMblW.js", "/assets/send-BWLy2b3j.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/twitter": { "id": "routes/twitter", "parentId": "root", "path": "twitter", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/twitter-DK_ye6Ff.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/plus-B3ZS8NII.js", "/assets/trash-2-BA1jMblW.js", "/assets/send-BWLy2b3j.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-zkgif3XM.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/createLucideIcon-DE2VjKt3.js", "/assets/search-D8C4gO1s.js", "/assets/external-link-CoUt5864.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/search": { "id": "routes/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-DSkMWtVc.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/search-D8C4gO1s.js", "/assets/external-link-CoUt5864.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.dashboard": { "id": "routes/api.extension.dashboard", "parentId": "root", "path": "api/extension/dashboard", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.dashboard-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.connection-status": { "id": "routes/api.extension.connection-status", "parentId": "root", "path": "api/extension/connection-status", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.connection-status-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.prospect": { "id": "routes/api.extension.prospect", "parentId": "root", "path": "api/extension/prospect", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.prospect-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "root", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-0OOLdWto.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/external-link-CoUt5864.js", "/assets/createLucideIcon-DE2VjKt3.js", "/assets/send-BWLy2b3j.js", "/assets/user-check-ClwYYjaz.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-77024f51.js", "version": "77024f51", "sri": void 0 };
 const assetsBuildDirectory = "build/client";
 const basename = "/";
 const future = { "unstable_optimizeDeps": false, "unstable_passThroughRequests": false, "unstable_subResourceIntegrity": false, "unstable_trailingSlashAwareDataRequests": false, "unstable_previewServerPrerendering": false, "v8_middleware": true, "v8_splitRouteModules": false, "v8_viteEnvironmentApi": false };
@@ -3794,13 +5031,21 @@ const routes = {
     caseSensitive: void 0,
     module: route2
   },
+  "routes/twitter": {
+    id: "routes/twitter",
+    parentId: "root",
+    path: "twitter",
+    index: void 0,
+    caseSensitive: void 0,
+    module: route3
+  },
   "routes/discover": {
     id: "routes/discover",
     parentId: "root",
     path: "discover",
     index: void 0,
     caseSensitive: void 0,
-    module: route3
+    module: route4
   },
   "routes/search": {
     id: "routes/search",
@@ -3808,7 +5053,23 @@ const routes = {
     path: "search",
     index: void 0,
     caseSensitive: void 0,
-    module: route4
+    module: route5
+  },
+  "routes/api.extension.dashboard": {
+    id: "routes/api.extension.dashboard",
+    parentId: "root",
+    path: "api/extension/dashboard",
+    index: void 0,
+    caseSensitive: void 0,
+    module: route6
+  },
+  "routes/api.extension.connection-status": {
+    id: "routes/api.extension.connection-status",
+    parentId: "root",
+    path: "api/extension/connection-status",
+    index: void 0,
+    caseSensitive: void 0,
+    module: route7
   },
   "routes/api.extension.prospect": {
     id: "routes/api.extension.prospect",
@@ -3816,7 +5077,7 @@ const routes = {
     path: "api/extension/prospect",
     index: void 0,
     caseSensitive: void 0,
-    module: route5
+    module: route8
   },
   "routes/prospect.$id": {
     id: "routes/prospect.$id",
@@ -3824,7 +5085,7 @@ const routes = {
     path: "prospects/:id",
     index: void 0,
     caseSensitive: void 0,
-    module: route6
+    module: route9
   }
 };
 const allowedActionOrigins = false;

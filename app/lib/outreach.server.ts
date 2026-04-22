@@ -17,6 +17,9 @@ export type Prospect = {
   name: string;
   position: string | null;
   profile_url: string;
+  source_channel: "linkedin" | "twitter";
+  twitter_handle: string | null;
+  twitter_url: string | null;
   about: string | null;
   priority_tag: string;
   wave: number | null;
@@ -31,6 +34,8 @@ export type Prospect = {
   accepted_date: string | null;
   report_sent_date: string | null;
   followup_sent_date: string | null;
+  twitter_contacted_date: string | null;
+  twitter_followup_sent_date: string | null;
   pending_checked_at: string | null;
   connection_last_state: string | null;
   brief_topic: string | null;
@@ -41,6 +46,8 @@ export type Prospect = {
   no_note_report_message: string | null;
   post_acceptance_message: string | null;
   followup_message: string | null;
+  twitter_dm_message: string | null;
+  twitter_followup_message: string | null;
   followup_due_date: string | null;
 };
 
@@ -65,6 +72,11 @@ export type AnalyzedProspect = {
   reportMessage: string;
   noNoteReportMessage: string;
   followupMessage: string;
+  sourceChannel?: "linkedin" | "twitter";
+  twitterHandle?: string;
+  twitterUrl?: string;
+  twitterDmMessage?: string;
+  twitterFollowupMessage?: string;
 };
 
 export type Task = {
@@ -79,6 +91,8 @@ export type Task = {
   updated_at: string;
   name: string | null;
   profile_url: string | null;
+  source_channel: string | null;
+  twitter_url: string | null;
 };
 
 export type Event = {
@@ -176,6 +190,8 @@ export async function getProspectDetail(id: number) {
       rm.content AS report_message,
       nrm.content AS no_note_report_message,
       fm.content AS followup_message,
+      tdm.content AS twitter_dm_message,
+      tfm.content AS twitter_followup_message,
       fm.due_date AS followup_due_date
     FROM prospects p
     LEFT JOIN briefs b ON b.prospect_id = p.id
@@ -183,13 +199,15 @@ export async function getProspectDetail(id: number) {
     LEFT JOIN messages rm ON rm.prospect_id = p.id AND rm.type = 'report'
     LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
     LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
+    LEFT JOIN messages tdm ON tdm.prospect_id = p.id AND tdm.type = 'twitter_dm'
+    LEFT JOIN messages tfm ON tfm.prospect_id = p.id AND tfm.type = 'twitter_followup'
     WHERE p.id = ?
   `, [id]);
 
   if (!prospect) return null;
 
   const tasks = await all<Task>(`
-    SELECT t.*, p.name, p.profile_url
+    SELECT t.*, p.name, p.profile_url, p.source_channel, p.twitter_url
     FROM tasks t
     LEFT JOIN prospects p ON p.id = t.prospect_id
     WHERE t.prospect_id = ?
@@ -229,6 +247,8 @@ export async function getDashboard() {
       rm.content AS report_message,
       nrm.content AS no_note_report_message,
       fm.content AS followup_message,
+      tdm.content AS twitter_dm_message,
+      tfm.content AS twitter_followup_message,
       fm.due_date AS followup_due_date
     FROM prospects p
     LEFT JOIN briefs b ON b.prospect_id = p.id
@@ -236,9 +256,12 @@ export async function getDashboard() {
     LEFT JOIN messages rm ON rm.prospect_id = p.id AND rm.type = 'report'
     LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
     LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
+    LEFT JOIN messages tdm ON tdm.prospect_id = p.id AND tdm.type = 'twitter_dm'
+    LEFT JOIN messages tfm ON tfm.prospect_id = p.id AND tfm.type = 'twitter_followup'
     ORDER BY
       CASE p.status
         WHEN 'accepted' THEN 1
+        WHEN 'twitter_contacted' THEN 2
         WHEN 'connection_sent' THEN 2
         WHEN 'to_contact' THEN 3
         WHEN 'report_sent' THEN 4
@@ -256,7 +279,7 @@ export async function getDashboard() {
   const prospects = prospectRows.map(withDerivedMessages);
 
   const tasks = await all<Task>(`
-    SELECT t.*, p.name, p.profile_url
+    SELECT t.*, p.name, p.profile_url, p.source_channel, p.twitter_url
     FROM tasks t
     LEFT JOIN prospects p ON p.id = t.prospect_id
     ORDER BY
@@ -280,15 +303,16 @@ export async function getDashboard() {
     events,
     sections: {
       toConnect: tasks.filter((item) => item.status === "open" && item.type === "send_connection"),
+      twitterToContact: tasks.filter((item) => item.status === "open" && item.type === "send_twitter_dm"),
       acceptedReport: prospects.filter((item) => item.status === "accepted" && !item.report_sent_date),
       missingBriefUrls: prospects.filter(
         (item) => ["connection_sent", "accepted"].includes(item.status) && Boolean(item.brief_topic) && !item.shared_url,
       ),
       followupsDue: tasks.filter(
-        (item) => item.status === "open" && item.type === "send_followup" && item.due_date && item.due_date <= today,
+        (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date <= today,
       ),
       followupsScheduled: tasks.filter(
-        (item) => item.status === "open" && item.type === "send_followup" && item.due_date && item.due_date > today,
+        (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date > today,
       ),
       conversationsActive: prospects.filter((item) => item.status === "conversation_active"),
       pendingConnections: prospects.filter((item) => item.status === "connection_sent"),
@@ -361,10 +385,23 @@ export async function runProspectAction(formData: FormData) {
     } else if (intent === "updateMessage") {
       const type = String(formData.get("messageType") || "").trim();
       const content = String(formData.get("messageContent") || "").trim();
-      if (!["connection", "report", "report_no_note", "followup"].includes(type)) throw new Error("Unknown message type");
+      if (!["connection", "report", "report_no_note", "followup", "twitter_dm", "twitter_followup"].includes(type)) throw new Error("Unknown message type");
       if (!content) throw new Error("Message content is required");
       await upsertGeneratedMessage(id, type, content, type === "followup" ? null : null);
       await addEvent(id, "message_updated", `${type} message edited.`, today);
+    } else if (intent === "markTwitterDmSent") {
+      const followupDate = addDaysIso(today, 2);
+      await run("UPDATE prospects SET status = 'twitter_contacted', twitter_contacted_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+      await run("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'twitter_dm'", [today, id]);
+      await run("UPDATE messages SET due_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'twitter_followup'", [followupDate, id]);
+      await completeOpenTask(id, "send_twitter_dm");
+      await createOpenTask(id, "send_twitter_followup", `Follow up on X with ${prospect.name}`, followupDate);
+      await addEvent(id, "twitter_dm_sent", `Twitter/X DM sent. Follow-up due on ${followupDate}.`, today);
+    } else if (intent === "markTwitterFollowupSent") {
+      await run("UPDATE prospects SET status = 'followup_sent', twitter_followup_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+      await run("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'twitter_followup'", [today, id]);
+      await completeOpenTask(id, "send_twitter_followup");
+      await addEvent(id, "twitter_followup_sent", "Twitter/X follow-up sent.", today);
     } else if (intent === "markAccepted") {
       await run("UPDATE prospects SET status = 'accepted', accepted_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
       await completeOpenTask(id, "watch_acceptance");
@@ -473,15 +510,21 @@ export async function importAnalyzedProspects(items: AnalyzedProspect[]) {
       const item = normalizeAnalyzedProspect(raw);
       if (!item.name || !item.profileUrl) continue;
       const status = statusForImportedProspect(item);
+      const sourceChannel = item.sourceChannel === "twitter" ? "twitter" : "linkedin";
+      const twitterUrl = sourceChannel === "twitter" ? normalizeTwitterUrl(item.twitterUrl || item.profileUrl) : null;
+      const twitterHandle = sourceChannel === "twitter" ? normalizeTwitterHandle(item.twitterHandle || item.profileUrl) : null;
       await run(`
         INSERT INTO prospects (
-          name, position, profile_url, about, priority_tag, wave, contact_now,
+          name, position, profile_url, source_channel, twitter_handle, twitter_url, about, priority_tag, wave, contact_now,
           rationale, recommended_template, notes, status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(profile_url) DO UPDATE SET
           name = excluded.name,
           position = excluded.position,
+          source_channel = excluded.source_channel,
+          twitter_handle = excluded.twitter_handle,
+          twitter_url = excluded.twitter_url,
           about = excluded.about,
           priority_tag = excluded.priority_tag,
           wave = excluded.wave,
@@ -498,6 +541,9 @@ export async function importAnalyzedProspects(items: AnalyzedProspect[]) {
         item.name,
         item.position,
         item.profileUrl,
+        sourceChannel,
+        twitterHandle,
+        twitterUrl,
         item.about,
         item.priorityTag,
         item.wave,
@@ -532,10 +578,20 @@ export async function importAnalyzedProspects(items: AnalyzedProspect[]) {
       if (item.followupMessage) {
         await upsertGeneratedMessage(prospect.id, "followup", item.followupMessage, null);
       }
-      if (item.contactNow && status === "to_contact") {
-        await createOpenTask(prospect.id, "send_connection", `Send connection request to ${item.name}`, today);
+      if (item.twitterDmMessage) {
+        await upsertGeneratedMessage(prospect.id, "twitter_dm", item.twitterDmMessage, null);
       }
-      await addEvent(prospect.id, "batch_imported", `Analyzed as ${item.priorityTag}${item.wave ? ` wave ${item.wave}` : ""}.`, today);
+      if (item.twitterFollowupMessage) {
+        await upsertGeneratedMessage(prospect.id, "twitter_followup", item.twitterFollowupMessage, null);
+      }
+      if (item.contactNow && status === "to_contact") {
+        if (sourceChannel === "twitter") {
+          await createOpenTask(prospect.id, "send_twitter_dm", `Send Twitter/X DM to ${item.name}`, today);
+        } else {
+          await createOpenTask(prospect.id, "send_connection", `Send connection request to ${item.name}`, today);
+        }
+      }
+      await addEvent(prospect.id, "batch_imported", `Analyzed from ${sourceChannel} as ${item.priorityTag}${item.wave ? ` wave ${item.wave}` : ""}.`, today);
     }
   } catch (error) {
     throw error;
@@ -544,6 +600,20 @@ export async function importAnalyzedProspects(items: AnalyzedProspect[]) {
 
 function normalizeLinkedInUrl(value: string) {
   return value.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
+}
+
+function normalizeTwitterUrl(value: string) {
+  const trimmed = value.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
+  const handle = normalizeTwitterHandle(trimmed);
+  if (handle) return `https://x.com/${handle}`;
+  return trimmed;
+}
+
+function normalizeTwitterHandle(value: string) {
+  const trimmed = value.trim();
+  const match = trimmed.match(/(?:x\.com|twitter\.com)\/@?([^/?#\s]+)/i);
+  const raw = match?.[1] || trimmed.replace(/^@/, "");
+  return raw && !/^https?:\/\//i.test(raw) ? raw.replace(/[^a-zA-Z0-9_]/g, "") : "";
 }
 
 async function getDb() {
@@ -575,15 +645,8 @@ async function applyMigrations(db: Client) {
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
-    await db.execute("BEGIN");
-    try {
-      await db.executeMultiple(sql);
-      await db.execute({ sql: "INSERT INTO schema_migrations (version) VALUES (?)", args: [file] });
-      await db.execute("COMMIT");
-    } catch (error) {
-      await db.execute("ROLLBACK");
-      throw error;
-    }
+    await db.executeMultiple(sql);
+    await db.execute({ sql: "INSERT INTO schema_migrations (version) VALUES (?)", args: [file] });
   }
 }
 
@@ -667,6 +730,7 @@ function withDerivedMessages(prospect: Prospect): Prospect {
   );
   return {
     ...prospect,
+    source_channel: prospect.source_channel || "linkedin",
     outreach_mode: prospect.outreach_mode || "with_note",
     connection_note_sent: prospect.connection_note_sent || 0,
     post_acceptance_message:
@@ -903,10 +967,12 @@ function normalizeAnalyzedProspect(item: AnalyzedProspect): AnalyzedProspect {
   const name = String(item.name || "").trim();
   const reportMessage = String(item.reportMessage || "").trim();
   const noNoteFallback = rewriteReportForNoNote(reportMessage, name, topic, item.position, item.about, item.recommendedTemplate);
+  const sourceChannel = item.sourceChannel === "twitter" ? "twitter" : "linkedin";
+  const profileUrl = sourceChannel === "twitter" ? normalizeTwitterUrl(item.profileUrl || item.twitterUrl || "") : String(item.profileUrl || "").trim();
   return {
     name,
     position: String(item.position || "").trim(),
-    profileUrl: String(item.profileUrl || "").trim(),
+    profileUrl,
     about: String(item.about || "").trim(),
     priorityTag: tag as AnalyzedProspect["priorityTag"],
     wave: item.wave ? Number(item.wave) : null,
@@ -919,6 +985,11 @@ function normalizeAnalyzedProspect(item: AnalyzedProspect): AnalyzedProspect {
     reportMessage,
     noNoteReportMessage: sanitizeNoNoteMessage(String(item.noNoteReportMessage || ""), noNoteFallback),
     followupMessage: String(item.followupMessage || "").trim(),
+    sourceChannel,
+    twitterHandle: sourceChannel === "twitter" ? normalizeTwitterHandle(item.twitterHandle || profileUrl) : "",
+    twitterUrl: sourceChannel === "twitter" ? normalizeTwitterUrl(item.twitterUrl || profileUrl) : "",
+    twitterDmMessage: String(item.twitterDmMessage || "").trim(),
+    twitterFollowupMessage: String(item.twitterFollowupMessage || "").trim(),
   };
 }
 

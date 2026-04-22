@@ -82,6 +82,60 @@ export async function analyzeProspectTable(tableText: string): Promise<BatchAnal
   return normalizeAnalysis(parseJson(content), prospects.length);
 }
 
+export async function analyzeTwitterProspectTable(tableText: string): Promise<BatchAnalysis> {
+  loadLocalEnv();
+  const prospects = parseProspectTable(tableText);
+  if (prospects.length === 0) {
+    throw new Error("No Twitter/X prospects found. Add at least a name and profile URL or handle.");
+  }
+
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing OPENROUTER_API_KEY. Add it to your shell env before running npm run dev.");
+  }
+
+  const model = process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
+  const outreach = fs.readFileSync(path.join(docsDir, "outreach.md"), "utf8");
+  const brand = fs.readFileSync(path.join(docsDir, "brand.md"), "utf8");
+  const prompt = buildTwitterPrompt({ prospects, outreach, brand });
+
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:4377",
+      "X-Title": "Tempolis Outreach App",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a strict JSON-producing public affairs outreach analyst. Return only valid JSON. Never include markdown.",
+        },
+        { role: "user", content: prompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`OpenRouter request failed (${response.status}): ${detail.slice(0, 600)}`);
+  }
+
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error("OpenRouter returned an empty response.");
+  }
+
+  return normalizeTwitterAnalysis(parseJson(content), prospects.length);
+}
+
 export function prospectEvidenceToTable(profile: {
   name?: string;
   position?: string;
@@ -213,6 +267,76 @@ ${JSON.stringify(prospects, null, 2)}
 `;
 }
 
+function buildTwitterPrompt({ prospects, outreach, brand }: { prospects: RawProspect[]; outreach: string; brand: string }) {
+  return `
+Analyze this new Tempolis Twitter/X outreach batch.
+
+CONTEXT
+This is not LinkedIn. We are testing Twitter/X as a manual acquisition channel. The app will help copy messages and track follow-ups, but it will not automate X.
+
+TASK
+- Classify every prospect as LEARN, WARM, SAVE or SKIP using the outreach playbook.
+- Assign a wave: 1 for immediate learning outreach, 2 for calibration, 3 for premium/saved prospects, null for SKIP.
+- Pick only the best first-wave LEARN profiles for contactToday=true.
+- Write all outreach messages in English by default.
+- Use brief topics of 1 to 3 words only.
+- A brief topic must be concrete: a figure, movement, issue, policy, controversy, narrative risk, public debate, or public discourse signal.
+- Never use vague discipline labels as briefTopic: "public policy", "policy", "communications", "public affairs", "EU affairs", "regulation", "strategy".
+- Treat Twitter activity carefully: posts, reposts, likes, follows and bio claims are signals of interest, not proof of professional ownership unless explicitly stated.
+- Do not say "your work on [topic]" unless the bio/about/role explicitly says they work on that topic.
+- For post-derived topics, use wording like "your recent posts on [topic]", "a topic you recently shared", or "given the policy issues visible in your feed".
+- Keep Twitter/X copy lighter and more direct than LinkedIn:
+  - twitterDmMessage: 4 lines max, no pitch, no demo/call ask, includes [shared link] on its own line if a brief is being sent.
+  - twitterDmMessage must explicitly connect the brief to one concrete source signal from the profile/feed.
+  - Preferred structure: "I prepared a short brief on [briefTopic], based on [specific signal from your bio/posts/feed]."
+  - The source signal should be specific but cautious: "your recent posts on...", "a topic you shared", "the policy signals in your feed", "your bio focus on...".
+  - Do not write vague copy like "I saw your recent interest in [topic]" unless the exact source signal is unclear.
+  - twitterFollowupMessage: one gentle follow-up at J+2 max.
+- If DMs may be closed, still generate a DM-style message that can be adapted as a reply after interaction.
+- Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format.
+- Ask for feedback on the angle, signal quality, or format. Do not ask for generic "thoughts".
+- Do not invent facts beyond the profile fields.
+
+OUTPUT JSON SHAPE
+{
+  "summary": {
+    "total": number,
+    "contactToday": number,
+    "wave2": number,
+    "saved": number,
+    "skipped": number
+  },
+  "prospects": [
+    {
+      "name": string,
+      "position": string,
+      "profileUrl": string,
+      "twitterHandle": string,
+      "about": string,
+      "priorityTag": "LEARN" | "WARM" | "SAVE" | "SKIP",
+      "wave": 1 | 2 | 3 | null,
+      "contactNow": boolean,
+      "rationale": string,
+      "briefTopic": string,
+      "briefPreparation": string,
+      "recommendedTemplate": string,
+      "twitterDmMessage": string,
+      "twitterFollowupMessage": string
+    }
+  ]
+}
+
+LINKEDIN PLAYBOOK TO ADAPT, NOT COPY LITERALLY
+${outreach}
+
+BRAND GUARDRAILS
+${brand.slice(0, 16000)}
+
+TWITTER/X PROSPECTS
+${JSON.stringify(prospects, null, 2)}
+`;
+}
+
 function parseProspectTable(input: string): RawProspect[] {
   const text = input.trim();
   if (!text) return [];
@@ -301,6 +425,19 @@ function normalizeAnalysis(value: unknown, total: number): BatchAnalysis {
   return { summary, prospects };
 }
 
+function normalizeTwitterAnalysis(value: unknown, total: number): BatchAnalysis {
+  const input = value as Partial<BatchAnalysis>;
+  const prospects = Array.isArray(input.prospects) ? input.prospects.map(normalizeTwitterProspect).filter((item) => item.name && item.profileUrl) : [];
+  const summary = {
+    total,
+    contactToday: prospects.filter((item) => item.contactNow).length,
+    wave2: prospects.filter((item) => item.wave === 2).length,
+    saved: prospects.filter((item) => item.priorityTag === "SAVE").length,
+    skipped: prospects.filter((item) => item.priorityTag === "SKIP").length,
+  };
+  return { summary, prospects };
+}
+
 function normalizeProspect(item: Partial<AnalyzedProspect>): AnalyzedProspect {
   const tag = ["LEARN", "WARM", "SAVE", "SKIP"].includes(String(item.priorityTag)) ? item.priorityTag : "SKIP";
   const wave = typeof item.wave === "number" ? item.wave : null;
@@ -345,6 +482,76 @@ I'm testing it with public affairs profiles before a proper launch. If the angle
     noNoteReportMessage,
     followupMessage,
   };
+}
+
+function normalizeTwitterProspect(item: Partial<AnalyzedProspect>): AnalyzedProspect {
+  const base = normalizeProspect({
+    ...item,
+    connectionMessage: "",
+    reportMessage: "",
+    noNoteReportMessage: "",
+    followupMessage: item.twitterFollowupMessage || item.followupMessage || "",
+  });
+  const profileUrl = normalizeTwitterProfileUrl(item.profileUrl || item.twitterUrl || item.twitterHandle || "");
+  const first = clean(item.name).split(/\s+/)[0] || clean(item.name);
+  const topic = base.briefTopic || "Narrative risk";
+  return {
+    ...base,
+    profileUrl,
+    sourceChannel: "twitter",
+    twitterUrl: profileUrl,
+    twitterHandle: normalizeTwitterHandle(item.twitterHandle || profileUrl),
+    twitterDmMessage: sanitizeTwitterDm(
+      enforceEnglish(clean(item.twitterDmMessage), twitterDmFallback(first, topic, item)),
+      twitterDmFallback(first, topic, item),
+    ),
+    twitterFollowupMessage: enforceEnglish(
+      clean(item.twitterFollowupMessage || item.followupMessage),
+      `Hi ${first}, quick follow-up in case the brief slipped through. Even a short read on whether the angle is useful would help.`,
+    ),
+  };
+}
+
+function normalizeTwitterProfileUrl(value: string) {
+  const handle = normalizeTwitterHandle(value);
+  return handle ? `https://x.com/${handle}` : clean(value);
+}
+
+function twitterDmFallback(firstName: string, topic: string, item: Partial<AnalyzedProspect>) {
+  const signal = twitterSourceSignal(item);
+  return `Hi ${firstName}, I'm building Tempolis and testing a short public affairs brief format.
+
+I prepared one on ${topic}, based on ${signal}.
+
+[shared link]
+
+Would your read be that the angle and signal are useful, or off?`;
+}
+
+function twitterSourceSignal(item: Partial<AnalyzedProspect>) {
+  const evidence = clean([item.briefPreparation, item.rationale, item.about, item.recommendedTemplate].filter(Boolean).join(" "));
+  if (/\bbio\b/i.test(evidence)) return "the policy focus in your bio";
+  if (/\b(post|tweet|thread)\b/i.test(evidence)) return "the policy signals in your recent posts";
+  if (/\b(repost|shared|activity|feed)\b/i.test(evidence)) return "a topic visible in your recent activity";
+  if (/\b(journalist|reporter|editor|coverage)\b/i.test(evidence)) return "the themes visible in your coverage";
+  if (/\b(policy|public affairs|regulation|eu|brussels)\b/i.test(evidence)) return "the policy themes visible on your profile";
+  return "the public signals visible on your profile";
+}
+
+function sanitizeTwitterDm(value: string, fallback: string) {
+  const cleanValue = value.trim();
+  if (!cleanValue) return fallback;
+  if (/\brecent interest in\b/i.test(cleanValue) && !/\bbased on\b/i.test(cleanValue)) return fallback;
+  if (!/\[shared link\]/i.test(cleanValue)) return fallback;
+  if (/\byour work on\b/i.test(cleanValue) && /\b(repost|shared|activity|feed)\b/i.test(cleanValue)) return fallback;
+  return cleanValue;
+}
+
+function normalizeTwitterHandle(value: string) {
+  const trimmed = clean(value);
+  const match = trimmed.match(/(?:x\.com|twitter\.com)\/@?([^/?#\s]+)/i);
+  const raw = match?.[1] || trimmed.replace(/^@/, "");
+  return raw && !/^https?:\/\//i.test(raw) ? raw.replace(/[^a-zA-Z0-9_]/g, "") : "";
 }
 
 function enforceEnglish(value: string, fallback: string) {

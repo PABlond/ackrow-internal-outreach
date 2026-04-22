@@ -8,6 +8,7 @@ const statuses = [
   "all",
   "to_contact",
   "connection_sent",
+  "twitter_contacted",
   "accepted",
   "report_sent",
   "followup_sent",
@@ -63,7 +64,7 @@ export default function SearchCrmPage() {
                 <input
                   value={query}
                   onChange={(event) => updateParams(setParams, event.target.value, status)}
-                  placeholder="Name, company, LinkedIn URL, topic, status..."
+                  placeholder="Name, company, profile URL, topic, status..."
                   className="min-h-11 w-full rounded-md border border-stone-300 bg-stone-50 pl-10 pr-3 outline-none focus:border-teal-700"
                 />
               </div>
@@ -118,8 +119,8 @@ export default function SearchCrmPage() {
                     <td className="border-b border-stone-200 px-4 py-3">{prospect.wave || "-"}</td>
                     <td className="border-b border-stone-200 px-4 py-3">{prospect.brief_topic || "-"}</td>
                     <td className="border-b border-stone-200 px-4 py-3">
-                      <a className="inline-flex items-center gap-1 text-teal-700 hover:text-teal-900" href={prospect.profile_url} target="_blank" rel="noreferrer">
-                        LinkedIn
+                      <a className="inline-flex items-center gap-1 text-teal-700 hover:text-teal-900" href={prospect.twitter_url || prospect.profile_url} target="_blank" rel="noreferrer">
+                        {prospect.source_channel === "twitter" ? "X" : "LinkedIn"}
                         <ExternalLink size={14} />
                       </a>
                     </td>
@@ -144,6 +145,9 @@ function filterProspects(prospects: Prospect[], query: string, status: string) {
       prospect.name,
       prospect.position,
       prospect.profile_url,
+      prospect.twitter_url,
+      prospect.twitter_handle,
+      prospect.source_channel,
       prospect.about,
       prospect.priority_tag,
       prospect.status,

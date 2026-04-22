@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Form, Link, redirect, useLoaderData } from "react-router";
-import { CalendarCheck, Check, Clipboard, Clock, ExternalLink, LinkIcon, Plus, Save, Search, Send, SkipForward, UserPlus, UserCheck } from "lucide-react";
+import { AtSign, CalendarCheck, Check, Clipboard, Clock, ExternalLink, LinkIcon, Plus, Save, Search, Send, SkipForward, UserPlus, UserCheck } from "lucide-react";
 
 import type { Route } from "./+types/home";
 import { getDashboard, runProspectAction, type Prospect, type Task } from "~/lib/outreach.server";
@@ -52,6 +52,13 @@ export default function Home() {
               Discover
             </Link>
             <Link
+              to="/twitter"
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-4 font-medium text-stone-900 hover:border-teal-700"
+            >
+              <AtSign size={18} />
+              Twitter/X
+            </Link>
+            <Link
               to="/batch"
               className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-4 font-medium text-white hover:bg-teal-800"
             >
@@ -88,6 +95,12 @@ export default function Home() {
                   {(task) => {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
                     return prospect ? <DashboardTaskLink prospect={prospect} detail="Send LinkedIn request with note, or without note if capped" /> : null;
+                  }}
+                </TodayPanel>
+                <TodayPanel storageKey="twitter-dms" title="Twitter/X DMs today" items={data.sections.twitterToContact}>
+                  {(task) => {
+                    const prospect = data.prospects.find((item) => item.id === task.prospect_id);
+                    return prospect ? <DashboardTaskLink prospect={prospect} detail="Send Twitter/X first touch manually" /> : null;
                   }}
                 </TodayPanel>
                 <TodayPanel storageKey="accepted-report" title="Accepted, report to send" items={data.sections.acceptedReport}>
@@ -161,11 +174,11 @@ function DashboardTaskLink({ prospect, detail }: { prospect: Prospect; detail: s
         <Badge tone={prospect.outreach_mode === "no_note" ? "blue" : "green"}>{outreachModeLabel(prospect)}</Badge>
         <Badge tone="blue">{prospect.status}</Badge>
         <a
-          href={prospect.profile_url}
+          href={prospect.twitter_url || prospect.profile_url}
           target="_blank"
           rel="noreferrer"
-          aria-label={`Open ${prospect.name} on LinkedIn`}
-          title="Open LinkedIn profile"
+          aria-label={`Open ${prospect.name} profile`}
+          title={prospect.source_channel === "twitter" ? "Open X profile" : "Open LinkedIn profile"}
           className="inline-flex size-7 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-600 hover:border-teal-700 hover:text-teal-800"
         >
           <ExternalLink size={14} />
@@ -182,7 +195,7 @@ type TodoItem = {
   priority: number;
   title: string;
   detail: string;
-  kind: "message" | "followup" | "connection" | "brief" | "pending";
+  kind: "message" | "followup" | "connection" | "twitter" | "brief" | "pending";
   prospect?: Prospect;
   task?: Task;
 };
@@ -234,6 +247,20 @@ function buildTodoItems(data: DashboardData): TodoItem[] {
     });
   }
 
+  for (const task of data.sections.twitterToContact) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : undefined;
+    if (!prospect) continue;
+    todos.push({
+      key: `twitter-${task.id}`,
+      priority: 30,
+      title: `Send Twitter/X DM to ${prospect.name}`,
+      detail: `${prospect.brief_topic || "no brief topic"} · manual first touch`,
+      kind: "twitter",
+      prospect,
+      task,
+    });
+  }
+
   for (const prospect of data.sections.missingBriefUrls.filter((item) => item.status !== "connection_sent")) {
     todos.push({
       key: `brief-url-${prospect.id}`,
@@ -270,6 +297,7 @@ function TodoItemRow({ item }: { item: TodoItem }) {
     item.kind === "message" ? <Send size={18} /> :
     item.kind === "followup" ? <CalendarCheck size={18} /> :
     item.kind === "connection" ? <UserPlus size={18} /> :
+    item.kind === "twitter" ? <AtSign size={18} /> :
     item.kind === "brief" ? <LinkIcon size={18} /> :
     <Clock size={18} />;
 
@@ -279,14 +307,24 @@ function TodoItemRow({ item }: { item: TodoItem }) {
         <TaskIntro icon={icon} title={item.title} detail={item.detail} />
       </Link>
       <div className="flex flex-wrap gap-2">
-        {item.prospect ? <LinkedInButton prospect={item.prospect} /> : null}
+        {item.prospect ? <ProfileButton prospect={item.prospect} /> : null}
         {item.kind === "message" && item.prospect?.post_acceptance_message ? <CopyButton label="Copy message" value={item.prospect.post_acceptance_message} /> : null}
         {item.kind === "message" && item.prospect ? <ActionButton intent="markReportSent" prospectId={item.prospect.id} label="Mark sent" icon={<Check size={16} />} primary /> : null}
-        {item.kind === "followup" && item.prospect?.followup_message ? <CopyButton label="Copy follow-up" value={item.prospect.followup_message} /> : null}
-        {item.kind === "followup" && item.task?.prospect_id ? <ActionButton intent="markFollowupSent" prospectId={item.task.prospect_id} label="Mark sent" icon={<Check size={16} />} primary /> : null}
+        {item.kind === "followup" && item.prospect ? <CopyButton label="Copy follow-up" value={followupCopy(item.prospect, item.task)} /> : null}
+        {item.kind === "followup" && item.task?.prospect_id ? (
+          <ActionButton
+            intent={item.task.type === "send_twitter_followup" ? "markTwitterFollowupSent" : "markFollowupSent"}
+            prospectId={item.task.prospect_id}
+            label="Mark sent"
+            icon={<Check size={16} />}
+            primary
+          />
+        ) : null}
         {item.kind === "connection" && item.prospect?.connection_message ? <CopyButton label="Copy note" value={item.prospect.connection_message} /> : null}
         {item.kind === "connection" && item.prospect ? <ActionButton intent="markConnectionSentWithNote" prospectId={item.prospect.id} label="Sent with note" icon={<Send size={16} />} primary /> : null}
         {item.kind === "connection" && item.prospect ? <ActionButton intent="markConnectionSentWithoutNote" prospectId={item.prospect.id} label="Sent without note" icon={<UserCheck size={16} />} /> : null}
+        {item.kind === "twitter" && item.prospect?.twitter_dm_message ? <CopyButton label="Copy DM" value={item.prospect.twitter_dm_message} /> : null}
+        {item.kind === "twitter" && item.prospect ? <ActionButton intent="markTwitterDmSent" prospectId={item.prospect.id} label="Mark DM sent" icon={<Send size={16} />} primary /> : null}
         {item.kind === "pending" && item.prospect ? <ActionLink href={item.prospect.profile_url} label="Check" icon={<ExternalLink size={16} />} /> : null}
         {item.kind === "brief" && item.prospect ? (
           <Link
@@ -302,7 +340,21 @@ function TodoItemRow({ item }: { item: TodoItem }) {
   );
 }
 
-function LinkedInButton({ prospect }: { prospect: Prospect }) {
+function ProfileButton({ prospect }: { prospect: Prospect }) {
+  if (prospect.source_channel === "twitter") {
+    return (
+      <a
+        href={prospect.twitter_url || prospect.profile_url}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={`Open ${prospect.name} on X`}
+        title="Open X profile"
+        className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-md border border-stone-900 bg-stone-900 px-3 text-sm font-black text-white hover:bg-stone-700"
+      >
+        X
+      </a>
+    );
+  }
   return (
     <a
       href={prospect.profile_url}
@@ -329,6 +381,10 @@ function ActionLink({ href, label, icon }: { href: string; label: string; icon: 
       {label}
     </a>
   );
+}
+
+function followupCopy(prospect: Prospect, task?: Task) {
+  return task?.type === "send_twitter_followup" ? prospect.twitter_followup_message || prospect.followup_message || "" : prospect.followup_message || "";
 }
 
 function pendingTodoAgeMs(prospect: Prospect, watchTask?: Task) {
@@ -401,7 +457,9 @@ function ProspectsTable({ prospects }: { prospects: Prospect[] }) {
 }
 
 function nextActionLabel(prospect: Prospect) {
+  if (prospect.status === "to_contact" && prospect.source_channel === "twitter") return "Send Twitter/X DM";
   if (prospect.status === "to_contact" && prospect.contact_now) return "Send request with note or without note";
+  if (prospect.status === "twitter_contacted") return "Wait for Twitter/X follow-up";
   if (prospect.status === "connection_sent") return `${outreachModeLabel(prospect)} · watch acceptance`;
   if (prospect.status === "accepted") return "Send first message";
   if (prospect.status === "report_sent") return "Wait for follow-up";
@@ -640,6 +698,7 @@ function Badge({ children, tone = "green" }: { children: React.ReactNode; tone?:
 }
 
 function outreachModeLabel(prospect: Prospect) {
+  if (prospect.source_channel === "twitter") return "Twitter/X";
   if (prospect.status === "to_contact") return "note optional";
   return prospect.outreach_mode === "no_note" ? "no note" : "with note";
 }

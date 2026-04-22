@@ -1,5 +1,5 @@
 import { Form, Link, redirect, useLoaderData } from "react-router";
-import { Archive, ArrowLeft, CalendarCheck, Check, Clipboard, ExternalLink, LinkIcon, MessageSquareReply, RefreshCw, Save, Send, SkipForward, Undo2, UserCheck } from "lucide-react";
+import { Archive, ArrowLeft, AtSign, CalendarCheck, Check, Clipboard, ExternalLink, LinkIcon, MessageSquareReply, RefreshCw, Save, Send, SkipForward, Undo2, UserCheck } from "lucide-react";
 
 import type { Route } from "./+types/prospect.$id";
 import { getProspectDetail, runProspectAction, type Prospect, type Reply, type Task } from "~/lib/outreach.server";
@@ -48,14 +48,15 @@ export default function ProspectDetail() {
             </Link>
             <h1 className="mt-3 text-4xl font-semibold tracking-normal">{prospect.name}</h1>
             <p className="mt-2 max-w-3xl text-stone-600">{prospect.position}</p>
-            <a className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-teal-700 hover:text-teal-900" href={prospect.profile_url} target="_blank" rel="noreferrer">
-              LinkedIn profile
+            <a className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-teal-700 hover:text-teal-900" href={prospect.twitter_url || prospect.profile_url} target="_blank" rel="noreferrer">
+              {prospect.source_channel === "twitter" ? "X profile" : "LinkedIn profile"}
               <ExternalLink size={14} />
             </a>
           </div>
           <div className="flex flex-wrap gap-2">
             <Badge>{prospect.priority_tag}</Badge>
             <Badge>Wave {prospect.wave || "-"}</Badge>
+            <Badge tone="blue">{prospect.source_channel === "twitter" ? "Twitter/X" : "LinkedIn"}</Badge>
             <Badge tone={prospect.outreach_mode === "no_note" ? "blue" : "green"}>{outreachModeLabel(prospect)}</Badge>
             <Badge tone="blue">{prospect.status}</Badge>
             <ArchiveControls prospect={prospect} />
@@ -72,7 +73,7 @@ export default function ProspectDetail() {
               </div>
             </section>
 
-            <CollapsibleSection title="Outreach mode" detail="Switch the copy strategy before sending." defaultOpen={!archiveMode}>
+            {prospect.source_channel === "linkedin" ? <CollapsibleSection title="Outreach mode" detail="Switch the copy strategy before sending." defaultOpen={!archiveMode}>
               <div className="mt-4 grid gap-3 rounded-lg border border-stone-200 bg-stone-50 p-4">
                 <div>
                   <p className="font-semibold">{outreachModeLabel(prospect)}</p>
@@ -87,7 +88,7 @@ export default function ProspectDetail() {
                   <ActionButton intent="switchToWithNoteMode" prospectId={prospect.id} label="Use with-note mode" icon={<Send size={16} />} primary={prospect.outreach_mode === "no_note"} />
                 </div>
               </div>
-            </CollapsibleSection>
+            </CollapsibleSection> : null}
 
             <CollapsibleSection title="Brief" detail="Topic, preparation notes and shared URL." defaultOpen={!archiveMode}>
               <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -150,21 +151,30 @@ export default function ProspectDetail() {
               </div>
             </CollapsibleSection>
 
-            <CollapsibleSection title="Messages" detail="Copy exact LinkedIn copy." defaultOpen={!archiveMode}>
-              <div className="mt-4 flex flex-wrap gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3">
-                <ActionButton intent="regenerateSaferCopy" prospectId={prospect.id} label="Regenerate safer copy" icon={<RefreshCw size={16} />} />
-              </div>
-              <div className="mt-4 grid gap-3">
-                {showConnectionNote ? <MessageEditor prospectId={prospect.id} title="Connection note" type="connection" content={prospect.connection_message} locked={connectionLocked} /> : <NoNoteCallout />}
-                <MessageEditor
-                  prospectId={prospect.id}
-                  title={prospect.outreach_mode === "no_note" ? "First message after acceptance" : "After acceptance"}
-                  type={prospect.outreach_mode === "no_note" ? "report_no_note" : "report"}
-                  content={prospect.post_acceptance_message}
-                  locked={reportLocked}
-                />
-                <MessageEditor prospectId={prospect.id} title="Follow-up J+2" type="followup" content={prospect.followup_message} />
-              </div>
+            <CollapsibleSection title="Messages" detail={prospect.source_channel === "twitter" ? "Copy exact Twitter/X copy." : "Copy exact LinkedIn copy."} defaultOpen={!archiveMode}>
+              {prospect.source_channel === "linkedin" ? (
+                <div className="mt-4 flex flex-wrap gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3">
+                  <ActionButton intent="regenerateSaferCopy" prospectId={prospect.id} label="Regenerate safer copy" icon={<RefreshCw size={16} />} />
+                </div>
+              ) : null}
+              {prospect.source_channel === "twitter" ? (
+                <div className="mt-4 grid gap-3">
+                  <MessageEditor prospectId={prospect.id} title="Twitter/X DM" type="twitter_dm" content={prospect.twitter_dm_message} locked={Boolean(prospect.twitter_contacted_date)} />
+                  <MessageEditor prospectId={prospect.id} title="Twitter/X follow-up J+2" type="twitter_followup" content={prospect.twitter_followup_message} locked={Boolean(prospect.twitter_followup_sent_date)} />
+                </div>
+              ) : (
+                <div className="mt-4 grid gap-3">
+                  {showConnectionNote ? <MessageEditor prospectId={prospect.id} title="Connection note" type="connection" content={prospect.connection_message} locked={connectionLocked} /> : <NoNoteCallout />}
+                  <MessageEditor
+                    prospectId={prospect.id}
+                    title={prospect.outreach_mode === "no_note" ? "First message after acceptance" : "After acceptance"}
+                    type={prospect.outreach_mode === "no_note" ? "report_no_note" : "report"}
+                    content={prospect.post_acceptance_message}
+                    locked={reportLocked}
+                  />
+                  <MessageEditor prospectId={prospect.id} title="Follow-up J+2" type="followup" content={prospect.followup_message} />
+                </div>
+              )}
             </CollapsibleSection>
 
             <section className="rounded-lg border border-stone-300 bg-white p-5">
@@ -268,6 +278,24 @@ function taskActions(task: Task, prospect: Prospect) {
       <>
         <CopyButton label="Copy follow-up" value={prospect.followup_message || ""} />
         <ActionButton intent="markFollowupSent" prospectId={prospect.id} label="Mark sent" icon={<CalendarCheck size={16} />} primary />
+      </>
+    );
+  }
+  if (task.type === "send_twitter_dm") {
+    return (
+      <>
+        <CopyButton label="Copy DM" value={prospect.twitter_dm_message || ""} />
+        <ActionLink href={prospect.twitter_url || prospect.profile_url} label="Open X" icon={<AtSign size={16} />} />
+        <ActionButton intent="markTwitterDmSent" prospectId={prospect.id} label="Mark DM sent" icon={<Send size={16} />} primary />
+      </>
+    );
+  }
+  if (task.type === "send_twitter_followup") {
+    return (
+      <>
+        <CopyButton label="Copy follow-up" value={prospect.twitter_followup_message || ""} />
+        <ActionLink href={prospect.twitter_url || prospect.profile_url} label="Open X" icon={<AtSign size={16} />} />
+        <ActionButton intent="markTwitterFollowupSent" prospectId={prospect.id} label="Mark sent" icon={<CalendarCheck size={16} />} primary />
       </>
     );
   }
@@ -458,6 +486,7 @@ function Badge({ children, tone = "green" }: { children: React.ReactNode; tone?:
 }
 
 function outreachModeLabel(prospect: Prospect) {
+  if (prospect.source_channel === "twitter") return "Twitter/X";
   if (prospect.status === "to_contact") return "note optional";
   return prospect.outreach_mode === "no_note" ? "no note" : "with note";
 }
@@ -533,6 +562,20 @@ function CopyButton({ label, value, compact = false }: { label: string; value: s
       <Clipboard size={16} />
       {label}
     </button>
+  );
+}
+
+function ActionLink({ href, label, icon }: { href: string; label: string; icon: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800 hover:border-teal-700"
+    >
+      {icon}
+      {label}
+    </a>
   );
 }
 
