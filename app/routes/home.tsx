@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Form, Link, redirect, useLoaderData } from "react-router";
 import { CalendarCheck, Check, Clipboard, Clock, ExternalLink, LinkIcon, Plus, Save, Search, Send, SkipForward, UserPlus, UserCheck } from "lucide-react";
 
@@ -9,8 +10,8 @@ export const meta: Route.MetaFunction = () => [
   { name: "description", content: "Internal Tempolis outreach tracker." },
 ];
 
-export function loader() {
-  return getDashboard();
+export async function loader() {
+  return await getDashboard();
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -22,6 +23,7 @@ export async function action({ request }: Route.ActionArgs) {
 export default function Home() {
   const data = useLoaderData<typeof loader>();
   const activeProspects = data.prospects.filter((prospect) => !["saved_for_later", "skipped", "archived_declined", "archived"].includes(prospect.status));
+  const todoItems = buildTodoItems(data);
 
   return (
     <main className="min-h-screen bg-stone-100 px-4 py-8 text-stone-950 sm:px-6 lg:px-8">
@@ -73,45 +75,55 @@ export default function Home() {
         <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-8">
             <section>
+              <SectionTitle title="Todo" detail="Highest-priority actions across the pipeline." />
+              <div className="mt-3 grid gap-3">
+                {todoItems.length ? todoItems.map((item) => <TodoItemRow key={item.key} item={item} />) : <EmptyState />}
+              </div>
+            </section>
+
+            <section>
               <SectionTitle title="Today" detail="What needs attention first." />
               <div className="mt-3 grid gap-3">
-                <TodayPanel title="Connect today" items={data.sections.toConnect}>
+                <TodayPanel storageKey="connect-today" title="Connect today" items={data.sections.toConnect}>
                   {(task) => {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
                     return prospect ? <DashboardTaskLink prospect={prospect} detail="Send LinkedIn request with note, or without note if capped" /> : null;
                   }}
                 </TodayPanel>
-                <TodayPanel title="Accepted, report to send" items={data.sections.acceptedReport}>
+                <TodayPanel storageKey="accepted-report" title="Accepted, report to send" items={data.sections.acceptedReport}>
                   {(prospect) => <DashboardTaskLink prospect={prospect} detail="Connection accepted, report to send" />}
                 </TodayPanel>
-                <TodayPanel title="Brief URLs missing" items={data.sections.missingBriefUrls}>
+                <TodayPanel storageKey="brief-urls-missing" title="Brief URLs missing" items={data.sections.missingBriefUrls}>
                   {(prospect) => <DashboardTaskLink prospect={prospect} detail={`Prepare brief URL for ${prospect.brief_topic || "brief"}`} />}
                 </TodayPanel>
-                <TodayPanel title="Follow-ups due" items={data.sections.followupsDue}>
+                <TodayPanel storageKey="followups-due" title="Follow-ups due" items={data.sections.followupsDue}>
                   {(task) => {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
                     return prospect ? <DashboardTaskLink prospect={prospect} detail={`Follow-up due ${task.due_date || ""}`} /> : null;
                   }}
                 </TodayPanel>
-                <TodayPanel title="Follow-ups scheduled" items={data.sections.followupsScheduled}>
+                <TodayPanel storageKey="followups-scheduled" title="Follow-ups scheduled" items={data.sections.followupsScheduled}>
                   {(task) => {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
                     return prospect ? <DashboardTaskLink prospect={prospect} detail={`Follow-up scheduled ${task.due_date || ""}`} /> : null;
                   }}
                 </TodayPanel>
-                <TodayPanel title="Active conversations" items={data.sections.conversationsActive}>
+                <TodayPanel storageKey="active-conversations" title="Active conversations" items={data.sections.conversationsActive}>
                   {(prospect) => <DashboardTaskLink prospect={prospect} detail="Prospect replied, conversation in progress" />}
                 </TodayPanel>
-                <TodayPanel title="Pending connections" items={data.sections.pendingConnections}>
+                <TodayPanel storageKey="pending-connections" title="Pending connections" items={data.sections.pendingConnections}>
                   {(prospect) => <DashboardTaskLink prospect={prospect} detail={`${outreachModeLabel(prospect)} · sent ${prospect.connection_sent_date || "today"} · watch acceptance`} />}
                 </TodayPanel>
               </div>
             </section>
 
-            <section>
-              <SectionTitle title="Prospects in progress" detail={`${activeProspects.length} profiles in the working set.`} />
+            <PersistentDetails storageKey="prospects-in-progress" defaultOpen={activeProspects.length > 0}>
+              <summary className="flex cursor-pointer list-none items-end justify-between gap-3">
+                <SectionTitle title="Prospects in progress" detail={`${activeProspects.length} profiles in the working set.`} />
+                <Badge tone={activeProspects.length ? "blue" : "green"}>{activeProspects.length}</Badge>
+              </summary>
               <ProspectsTable prospects={activeProspects} />
-            </section>
+            </PersistentDetails>
           </div>
 
           <aside className="h-fit rounded-lg border border-stone-300 bg-white p-5 lg:sticky lg:top-6">
@@ -140,18 +152,218 @@ export default function Home() {
 
 function DashboardTaskLink({ prospect, detail }: { prospect: Prospect; detail: string }) {
   return (
-    <Link
-      to={`/prospects/${prospect.id}`}
-      className="grid gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3 hover:border-teal-700 md:grid-cols-[1fr_auto] md:items-center"
-    >
-      <TaskIntro icon={<Clock size={18} />} title={prospect.name} detail={detail} />
-      <div className="flex flex-wrap gap-2">
+    <div className="grid gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3 hover:border-teal-700 md:grid-cols-[1fr_auto] md:items-center">
+      <Link to={`/prospects/${prospect.id}`} className="block">
+        <TaskIntro icon={<Clock size={18} />} title={prospect.name} detail={detail} />
+      </Link>
+      <div className="flex flex-wrap items-center gap-2">
         <Badge>{prospect.priority_tag}</Badge>
         <Badge tone={prospect.outreach_mode === "no_note" ? "blue" : "green"}>{outreachModeLabel(prospect)}</Badge>
         <Badge tone="blue">{prospect.status}</Badge>
+        <a
+          href={prospect.profile_url}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`Open ${prospect.name} on LinkedIn`}
+          title="Open LinkedIn profile"
+          className="inline-flex size-7 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-600 hover:border-teal-700 hover:text-teal-800"
+        >
+          <ExternalLink size={14} />
+        </a>
       </div>
-    </Link>
+    </div>
   );
+}
+
+type DashboardData = Awaited<ReturnType<typeof getDashboard>>;
+
+type TodoItem = {
+  key: string;
+  priority: number;
+  title: string;
+  detail: string;
+  kind: "message" | "followup" | "connection" | "brief" | "pending";
+  prospect?: Prospect;
+  task?: Task;
+};
+
+function buildTodoItems(data: DashboardData): TodoItem[] {
+  const prospectsById = new Map(data.prospects.map((prospect) => [prospect.id, prospect]));
+  const watchAcceptanceTasksByProspectId = new Map(
+    data.tasks
+      .filter((task) => task.status === "open" && task.type === "watch_acceptance" && task.prospect_id)
+      .map((task) => [task.prospect_id, task]),
+  );
+  const todos: TodoItem[] = [];
+
+  for (const prospect of data.sections.acceptedReport) {
+    todos.push({
+      key: `accepted-report-${prospect.id}`,
+      priority: 10,
+      title: `Send first message to ${prospect.name}`,
+      detail: `${prospect.brief_topic || "No brief topic"} · connection accepted`,
+      kind: "message",
+      prospect,
+    });
+  }
+
+  for (const task of data.sections.followupsDue) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : undefined;
+    todos.push({
+      key: `followup-${task.id}`,
+      priority: task.due_date && task.due_date < data.today ? 20 : 25,
+      title: `Send follow-up to ${task.name || prospect?.name || "prospect"}`,
+      detail: task.due_date && task.due_date < data.today ? `Overdue since ${task.due_date}` : `Due ${task.due_date || "today"}`,
+      kind: "followup",
+      prospect,
+      task,
+    });
+  }
+
+  for (const task of data.sections.toConnect) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : undefined;
+    if (!prospect) continue;
+    todos.push({
+      key: `connect-${task.id}`,
+      priority: 30,
+      title: `Send connection request to ${prospect.name}`,
+      detail: `${outreachModeLabel(prospect)} · ${prospect.brief_topic || "no brief topic"}`,
+      kind: "connection",
+      prospect,
+      task,
+    });
+  }
+
+  for (const prospect of data.sections.missingBriefUrls.filter((item) => item.status !== "connection_sent")) {
+    todos.push({
+      key: `brief-url-${prospect.id}`,
+      priority: 40,
+      title: `Add brief URL for ${prospect.name}`,
+      detail: `Prepare ${prospect.brief_topic || "brief"} before first message`,
+      kind: "brief",
+      prospect,
+    });
+  }
+
+  for (const prospect of data.sections.pendingConnections) {
+    const watchTask = watchAcceptanceTasksByProspectId.get(prospect.id);
+    const pendingAge = pendingTodoAgeMs(prospect, watchTask);
+    if (pendingAge !== null && pendingAge < 2 * 60 * 60 * 1000) continue;
+
+    todos.push({
+      key: `pending-check-${prospect.id}`,
+      priority: prospect.pending_checked_at ? 60 : 50,
+      title: `Check pending connection for ${prospect.name}`,
+      detail: prospect.pending_checked_at
+        ? `Last checked ${formatRelativeAge(prospect.pending_checked_at)}`
+        : `Never checked · sent ${prospect.connection_sent_date || "unknown date"}`,
+      kind: "pending",
+      prospect,
+    });
+  }
+
+  return todos.sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
+}
+
+function TodoItemRow({ item }: { item: TodoItem }) {
+  const icon =
+    item.kind === "message" ? <Send size={18} /> :
+    item.kind === "followup" ? <CalendarCheck size={18} /> :
+    item.kind === "connection" ? <UserPlus size={18} /> :
+    item.kind === "brief" ? <LinkIcon size={18} /> :
+    <Clock size={18} />;
+
+  return (
+    <div className="grid gap-3 rounded-lg border border-stone-300 bg-white p-4 md:grid-cols-[1fr_auto] md:items-center">
+      <Link to={item.prospect ? `/prospects/${item.prospect.id}` : "/"} className="block">
+        <TaskIntro icon={icon} title={item.title} detail={item.detail} />
+      </Link>
+      <div className="flex flex-wrap gap-2">
+        {item.prospect ? <LinkedInButton prospect={item.prospect} /> : null}
+        {item.kind === "message" && item.prospect?.post_acceptance_message ? <CopyButton label="Copy message" value={item.prospect.post_acceptance_message} /> : null}
+        {item.kind === "message" && item.prospect ? <ActionButton intent="markReportSent" prospectId={item.prospect.id} label="Mark sent" icon={<Check size={16} />} primary /> : null}
+        {item.kind === "followup" && item.prospect?.followup_message ? <CopyButton label="Copy follow-up" value={item.prospect.followup_message} /> : null}
+        {item.kind === "followup" && item.task?.prospect_id ? <ActionButton intent="markFollowupSent" prospectId={item.task.prospect_id} label="Mark sent" icon={<Check size={16} />} primary /> : null}
+        {item.kind === "connection" && item.prospect?.connection_message ? <CopyButton label="Copy note" value={item.prospect.connection_message} /> : null}
+        {item.kind === "connection" && item.prospect ? <ActionButton intent="markConnectionSentWithNote" prospectId={item.prospect.id} label="Sent with note" icon={<Send size={16} />} primary /> : null}
+        {item.kind === "connection" && item.prospect ? <ActionButton intent="markConnectionSentWithoutNote" prospectId={item.prospect.id} label="Sent without note" icon={<UserCheck size={16} />} /> : null}
+        {item.kind === "pending" && item.prospect ? <ActionLink href={item.prospect.profile_url} label="Check" icon={<ExternalLink size={16} />} /> : null}
+        {item.kind === "brief" && item.prospect ? (
+          <Link
+            to={`/prospects/${item.prospect.id}`}
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800 hover:border-teal-700"
+          >
+            <LinkIcon size={16} />
+            Add URL
+          </Link>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function LinkedInButton({ prospect }: { prospect: Prospect }) {
+  return (
+    <a
+      href={prospect.profile_url}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`Open ${prospect.name} on LinkedIn`}
+      title="Open LinkedIn profile"
+      className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-md border border-[#0a66c2] bg-[#0a66c2] px-3 text-sm font-black text-white hover:bg-[#004182]"
+    >
+      in
+    </a>
+  );
+}
+
+function ActionLink({ href, label, icon }: { href: string; label: string; icon: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800 hover:border-teal-700"
+    >
+      {icon}
+      {label}
+    </a>
+  );
+}
+
+function pendingTodoAgeMs(prospect: Prospect, watchTask?: Task) {
+  if (prospect.pending_checked_at) return dateAgeMs(prospect.pending_checked_at);
+  if (watchTask?.created_at) return dateAgeMs(watchTask.created_at);
+  if (prospect.connection_sent_date && prospect.connection_sent_date < todayIsoClient()) return 2 * 60 * 60 * 1000;
+  if (prospect.connection_sent_date) return 0;
+  return null;
+}
+
+function dateAgeMs(value: string | null) {
+  if (!value) return null;
+  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  const timestamp = Date.parse(normalized);
+  if (Number.isNaN(timestamp)) return null;
+  return Date.now() - timestamp;
+}
+
+function formatRelativeAge(value: string) {
+  const ageMs = dateAgeMs(value);
+  if (ageMs === null) return value;
+  const minutes = Math.max(0, Math.round(ageMs / 60000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function todayIsoClient() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Paris",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 function ProspectsTable({ prospects }: { prospects: Prospect[] }) {
@@ -218,15 +430,50 @@ function SectionTitle({ title, detail }: { title: string; detail: string }) {
   );
 }
 
-function TodayPanel<T>({ title, items, children }: { title: string; items: T[]; children: (item: T) => React.ReactNode }) {
+function TodayPanel<T>({ storageKey, title, items, children }: { storageKey: string; title: string; items: T[]; children: (item: T) => React.ReactNode }) {
   const defaultOpen = items.length > 0;
   return (
-    <details className="rounded-lg border border-stone-300 bg-white p-4" open={defaultOpen}>
+    <PersistentDetails storageKey={`today-${storageKey}`} defaultOpen={defaultOpen} className="rounded-lg border border-stone-300 bg-white p-4">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
         <h3 className="font-semibold">{title}</h3>
         <Badge tone={items.length ? "blue" : "green"}>{items.length}</Badge>
       </summary>
       <div className="mt-3 grid gap-2">{items.length ? items.map((item, index) => <div key={index}>{children(item)}</div>) : <EmptyState />}</div>
+    </PersistentDetails>
+  );
+}
+
+function PersistentDetails({
+  storageKey,
+  defaultOpen,
+  className,
+  children,
+}: {
+  storageKey: string;
+  defaultOpen: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const key = `outreach.dashboard.details.${storageKey}`;
+  const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(key);
+    if (saved === "open") setOpen(true);
+    if (saved === "closed") setOpen(false);
+  }, [key]);
+
+  return (
+    <details
+      className={className}
+      open={open}
+      onToggle={(event) => {
+        const next = event.currentTarget.open;
+        setOpen(next);
+        window.localStorage.setItem(key, next ? "open" : "closed");
+      }}
+    >
+      {children}
     </details>
   );
 }

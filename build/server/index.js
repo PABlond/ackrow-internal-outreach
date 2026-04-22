@@ -5,7 +5,7 @@ import { ServerRouter, UNSAFE_withComponentProps, Outlet, UNSAFE_withErrorBounda
 import { isbot } from "isbot";
 import { renderToPipeableStream } from "react-dom/server";
 import { useContext, createContext, forwardRef, createElement, useState, useEffect } from "react";
-import { DatabaseSync } from "node:sqlite";
+import { createClient } from "@libsql/client";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -398,19 +398,18 @@ const dataDir = path.join(rootDir, "data");
 const dbPath = path.join(dataDir, "outreach.sqlite");
 const migrationsDir = path.join(rootDir, "db", "migrations");
 let database;
-function findProspectByProfileUrl(profileUrl) {
-  const row = getDb().prepare("SELECT id FROM prospects WHERE profile_url = ?").get(normalizeLinkedInUrl$1(profileUrl));
+let databaseReady;
+async function findProspectByProfileUrl(profileUrl) {
+  const row = await one("SELECT id FROM prospects WHERE profile_url = ?", [normalizeLinkedInUrl$1(profileUrl)]);
   return row?.id || null;
 }
-function setProspectOutreachPreference(id, mode) {
-  const db = getDb();
+async function setProspectOutreachPreference(id, mode) {
   const today = todayIso();
-  db.prepare("UPDATE prospects SET outreach_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(mode, id);
-  addEvent(id, mode === "no_note" ? "no_note_mode_selected" : "with_note_mode_selected", `Extension selected ${mode === "no_note" ? "no-note" : "with-note"} outreach mode.`, today);
+  await run("UPDATE prospects SET outreach_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [mode, id]);
+  await addEvent(id, mode === "no_note" ? "no_note_mode_selected" : "with_note_mode_selected", `Extension selected ${mode === "no_note" ? "no-note" : "with-note"} outreach mode.`, today);
 }
-function getProspectDetail(id) {
-  const db = getDb();
-  const prospect = db.prepare(`
+async function getProspectDetail(id) {
+  const prospect = await one(`
     SELECT
       p.*,
       b.topic AS brief_topic,
@@ -428,9 +427,9 @@ function getProspectDetail(id) {
     LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
     LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
     WHERE p.id = ?
-  `).get(id);
+  `, [id]);
   if (!prospect) return null;
-  const tasks = db.prepare(`
+  const tasks = await all(`
     SELECT t.*, p.name, p.profile_url
     FROM tasks t
     LEFT JOIN prospects p ON p.id = t.prospect_id
@@ -439,26 +438,25 @@ function getProspectDetail(id) {
       CASE t.status WHEN 'open' THEN 0 ELSE 1 END,
       COALESCE(t.due_date, '9999-12-31'),
       t.created_at
-  `).all(id);
-  const events = db.prepare(`
+  `, [id]);
+  const events = await all(`
     SELECT e.*, p.name
     FROM events e
     LEFT JOIN prospects p ON p.id = e.prospect_id
     WHERE e.prospect_id = ?
     ORDER BY e.happened_at DESC, e.id DESC
-  `).all(id);
-  const replies = db.prepare(`
+  `, [id]);
+  const replies = await all(`
     SELECT *
     FROM replies
     WHERE prospect_id = ?
     ORDER BY created_at DESC, id DESC
-  `).all(id);
+  `, [id]);
   return { prospect: withDerivedMessages(prospect), tasks, events, replies, today: todayIso() };
 }
-function getDashboard() {
-  const db = getDb();
+async function getDashboard() {
   const today = todayIso();
-  const prospectRows = db.prepare(`
+  const prospectRows = await all(`
     SELECT
       p.*,
       b.topic AS brief_topic,
@@ -491,9 +489,9 @@ function getDashboard() {
       END,
       p.wave,
       p.name
-  `).all();
+  `);
   const prospects = prospectRows.map(withDerivedMessages);
-  const tasks = db.prepare(`
+  const tasks = await all(`
     SELECT t.*, p.name, p.profile_url
     FROM tasks t
     LEFT JOIN prospects p ON p.id = t.prospect_id
@@ -501,14 +499,14 @@ function getDashboard() {
       CASE WHEN t.due_date IS NOT NULL AND t.due_date < ? THEN 0 ELSE 1 END,
       COALESCE(t.due_date, '9999-12-31'),
       t.created_at
-  `).all(today);
-  const events = db.prepare(`
+  `, [today]);
+  const events = await all(`
     SELECT e.*, p.name
     FROM events e
     LEFT JOIN prospects p ON p.id = e.prospect_id
     ORDER BY e.happened_at DESC, e.id DESC
     LIMIT 100
-  `).all();
+  `);
   return {
     today,
     prospects,
@@ -535,79 +533,79 @@ function getDashboard() {
 async function runProspectAction(formData) {
   const id = Number(formData.get("prospectId"));
   const intent = String(formData.get("intent") || "");
-  const db = getDb();
-  const prospect = db.prepare("SELECT * FROM prospects WHERE id = ?").get(id);
+  const prospect = await one("SELECT * FROM prospects WHERE id = ?", [id]);
   if (!id || !prospect) {
     throw new Error("Unknown prospect");
   }
   const today = todayIso();
-  if (intent === "generateNoNoteMode") {
+  if (intent === "generateNoNoteMode" || intent === "regenerateSaferCopy") {
     const rewrite = await generateNoNoteRewrite(id);
-    db.exec("BEGIN");
     try {
-      db.prepare("UPDATE prospects SET outreach_mode = 'no_note', connection_note_sent = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      upsertGeneratedMessage(id, "report_no_note", rewrite.noNoteReportMessage, null);
-      upsertGeneratedMessage(id, "followup", rewrite.followupMessage, null);
-      addEvent(id, "no_note_mode_generated", "No-note outreach mode generated with AI.", today);
-      db.exec("COMMIT");
+      await run("UPDATE prospects SET outreach_mode = 'no_note', connection_note_sent = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await upsertGeneratedMessage(id, "report_no_note", rewrite.noNoteReportMessage, null);
+      await upsertGeneratedMessage(id, "followup", rewrite.followupMessage, null);
+      await addEvent(
+        id,
+        intent === "regenerateSaferCopy" ? "safer_copy_regenerated" : "no_note_mode_generated",
+        intent === "regenerateSaferCopy" ? "Safer no-note copy regenerated with activity-signal guardrails." : "No-note outreach mode generated with AI.",
+        today
+      );
     } catch (error) {
-      db.exec("ROLLBACK");
       throw error;
     }
     return;
   }
-  db.exec("BEGIN");
   try {
     if (intent === "deleteProspect") {
-      completeAllOpenTasks(id);
-      db.prepare("DELETE FROM prospects WHERE id = ?").run(id);
+      await completeAllOpenTasks(id);
+      await run("DELETE FROM prospects WHERE id = ?", [id]);
     } else if (intent === "addProspectReply") {
       const inboundContent = String(formData.get("inboundContent") || "").trim();
       const suggestedResponse = String(formData.get("suggestedResponse") || "").trim() || replyFallback(prospect.name, inboundContent);
       if (!inboundContent) throw new Error("Reply content is required");
-      db.prepare("INSERT INTO replies (prospect_id, inbound_content, suggested_response) VALUES (?, ?, ?)").run(id, inboundContent, suggestedResponse);
-      db.prepare("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      completeOpenTask(id, "send_followup");
-      addEvent(id, "reply_received", "Prospect replied. Follow-up task closed.", today);
+      await run("INSERT INTO replies (prospect_id, inbound_content, suggested_response) VALUES (?, ?, ?)", [id, inboundContent, suggestedResponse]);
+      await run("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await completeOpenTask(id, "send_followup");
+      await addEvent(id, "reply_received", "Prospect replied. Follow-up task closed.", today);
     } else if (intent === "updateReplyResponse") {
       const replyId = Number(formData.get("replyId"));
       const suggestedResponse = String(formData.get("suggestedResponse") || "").trim();
       if (!replyId) throw new Error("Reply id is required");
       if (!suggestedResponse) throw new Error("Suggested response is required");
-      db.prepare("UPDATE replies SET suggested_response = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?").run(suggestedResponse, replyId, id);
-      addEvent(id, "reply_response_updated", "Suggested response edited.", today);
+      await run("UPDATE replies SET suggested_response = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?", [suggestedResponse, replyId, id]);
+      await addEvent(id, "reply_response_updated", "Suggested response edited.", today);
     } else if (intent === "markReplySent") {
       const replyId = Number(formData.get("replyId"));
       if (!replyId) throw new Error("Reply id is required");
-      db.prepare("UPDATE replies SET sent_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?").run(today, replyId, id);
-      completeOpenTask(id, "send_followup");
-      db.prepare("UPDATE prospects SET status = 'reply_sent', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      addEvent(id, "reply_sent", "Reply sent to prospect.", today);
+      await run("UPDATE replies SET sent_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?", [today, replyId, id]);
+      await completeOpenTask(id, "send_followup");
+      await run("UPDATE prospects SET status = 'reply_sent', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await addEvent(id, "reply_sent", "Reply sent to prospect.", today);
     } else if (intent === "archiveProspect") {
-      db.prepare("UPDATE prospects SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      completeAllOpenTasks(id);
-      addEvent(id, "archived", "Prospect manually archived.", today);
+      await run("UPDATE prospects SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await completeAllOpenTasks(id);
+      await addEvent(id, "archived", "Prospect manually archived.", today);
     } else if (intent === "reopenConversation") {
-      db.prepare("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      addEvent(id, "conversation_reopened", "Conversation reopened.", today);
+      await run("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await addEvent(id, "conversation_reopened", "Conversation reopened.", today);
     } else if (intent === "updateMessage") {
       const type = String(formData.get("messageType") || "").trim();
       const content = String(formData.get("messageContent") || "").trim();
       if (!["connection", "report", "report_no_note", "followup"].includes(type)) throw new Error("Unknown message type");
       if (!content) throw new Error("Message content is required");
-      upsertGeneratedMessage(id, type, content, type === "followup" ? null : null);
-      addEvent(id, "message_updated", `${type} message edited.`, today);
+      await upsertGeneratedMessage(id, type, content, type === "followup" ? null : null);
+      await addEvent(id, "message_updated", `${type} message edited.`, today);
     } else if (intent === "markAccepted") {
-      db.prepare("UPDATE prospects SET status = 'accepted', accepted_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
-      completeOpenTask(id, "watch_acceptance");
-      createOpenTask(id, "send_report", `Send first message to ${prospect.name}`, today);
-      addEvent(id, "accepted", "LinkedIn connection accepted.", today);
+      await run("UPDATE prospects SET status = 'accepted', accepted_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+      await completeOpenTask(id, "watch_acceptance");
+      await createOpenTask(id, "send_report", `Send first message to ${prospect.name}`, today);
+      await addEvent(id, "accepted", "LinkedIn connection accepted.", today);
     } else if (intent === "archiveDeclined") {
-      db.prepare("UPDATE prospects SET status = 'archived_declined', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      completeAllOpenTasks(id);
-      addEvent(id, "archived_declined", "Connection request declined or ignored. Archived to avoid recontacting.", today);
+      await run("UPDATE prospects SET status = 'archived_declined', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await completeAllOpenTasks(id);
+      await addEvent(id, "archived_declined", "Connection request declined or ignored. Archived to avoid recontacting.", today);
     } else if (intent === "markConnectionSent" || intent === "markConnectionSentWithNote") {
-      db.prepare(`
+      await run(`
         UPDATE prospects
         SET status = 'connection_sent',
             outreach_mode = 'with_note',
@@ -615,13 +613,13 @@ async function runProspectAction(formData) {
             connection_sent_date = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(today, id);
-      db.prepare("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'connection'").run(today, id);
-      completeOpenTask(id, "send_connection");
-      createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
-      addEvent(id, "connection_sent", "Connection request sent with custom note.", today);
+      `, [today, id]);
+      await run("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'connection'", [today, id]);
+      await completeOpenTask(id, "send_connection");
+      await createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
+      await addEvent(id, "connection_sent", "Connection request sent with custom note.", today);
     } else if (intent === "markConnectionSentWithoutNote") {
-      db.prepare(`
+      await run(`
         UPDATE prospects
         SET status = 'connection_sent',
             outreach_mode = 'no_note',
@@ -629,59 +627,57 @@ async function runProspectAction(formData) {
             connection_sent_date = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(today, id);
-      completeOpenTask(id, "send_connection");
-      createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
-      addEvent(id, "connection_sent_without_note", "Connection request sent without custom note. First outreach message waits for acceptance.", today);
+      `, [today, id]);
+      await completeOpenTask(id, "send_connection");
+      await createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
+      await addEvent(id, "connection_sent_without_note", "Connection request sent without custom note. First outreach message waits for acceptance.", today);
     } else if (intent === "addBriefUrl") {
       const sharedUrl = String(formData.get("sharedUrl") || "").trim();
       if (!sharedUrl) throw new Error("Brief URL is required");
-      db.prepare("UPDATE briefs SET shared_url = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ?").run(sharedUrl, id);
-      addEvent(id, "brief_url_added", `Brief URL added: ${sharedUrl}`, today);
+      await run("UPDATE briefs SET shared_url = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ?", [sharedUrl, id]);
+      await addEvent(id, "brief_url_added", `Brief URL added: ${sharedUrl}`, today);
     } else if (intent === "updateBriefStrategy") {
       const topic = trimWords(String(formData.get("briefTopic") || ""), 3);
       const preparationNotes = String(formData.get("briefPreparation") || "").trim();
       if (!topic) throw new Error("Brief topic is required");
-      db.prepare(`
+      await run(`
         INSERT INTO briefs (prospect_id, topic, preparation_notes)
         VALUES (?, ?, ?)
         ON CONFLICT(prospect_id) DO UPDATE SET
           topic = excluded.topic,
           preparation_notes = excluded.preparation_notes,
           updated_at = CURRENT_TIMESTAMP
-      `).run(id, topic, preparationNotes);
-      upsertGeneratedMessage(id, "report_no_note", noNoteReportFallback(prospect.name, topic, prospect.position, prospect.about, prospect.recommended_template), null);
-      addEvent(id, "brief_strategy_updated", `Brief topic updated to ${topic}.`, today);
+      `, [id, topic, preparationNotes]);
+      await upsertGeneratedMessage(id, "report_no_note", noNoteReportFallback(prospect.name, topic, prospect.position, prospect.about, prospect.recommended_template), null);
+      await addEvent(id, "brief_strategy_updated", `Brief topic updated to ${topic}.`, today);
     } else if (intent === "markReportSent") {
-      const followupDate = addDaysIso(today, 5);
-      db.prepare("UPDATE prospects SET status = 'report_sent', report_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
-      db.prepare("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'report'").run(today, id);
-      db.prepare("UPDATE messages SET due_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'followup'").run(followupDate, id);
-      completeOpenTask(id, "send_report");
-      createOpenTask(id, "send_followup", `Follow up with ${prospect.name}`, followupDate);
-      addEvent(id, "report_sent", `Report sent. Follow-up due on ${followupDate}.`, today);
+      const followupDate = addDaysIso(today, 2);
+      await run("UPDATE prospects SET status = 'report_sent', report_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+      await run("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'report'", [today, id]);
+      await run("UPDATE messages SET due_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'followup'", [followupDate, id]);
+      await completeOpenTask(id, "send_report");
+      await createOpenTask(id, "send_followup", `Follow up with ${prospect.name}`, followupDate);
+      await addEvent(id, "report_sent", `Report sent. Follow-up due on ${followupDate}.`, today);
     } else if (intent === "markFollowupSent") {
-      db.prepare("UPDATE prospects SET status = 'followup_sent', followup_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
-      db.prepare("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'followup'").run(today, id);
-      completeOpenTask(id, "send_followup");
-      addEvent(id, "followup_sent", "Follow-up sent.", today);
+      await run("UPDATE prospects SET status = 'followup_sent', followup_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+      await run("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'followup'", [today, id]);
+      await completeOpenTask(id, "send_followup");
+      await addEvent(id, "followup_sent", "Follow-up sent.", today);
     } else if (intent === "skip") {
-      db.prepare("UPDATE prospects SET status = 'skipped', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      completeAllOpenTasks(id);
-      addEvent(id, "skipped", "Prospect skipped.", today);
+      await run("UPDATE prospects SET status = 'skipped', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await completeAllOpenTasks(id);
+      await addEvent(id, "skipped", "Prospect skipped.", today);
     } else if (intent === "saveForLater") {
-      db.prepare("UPDATE prospects SET status = 'saved_for_later', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      completeAllOpenTasks(id);
-      addEvent(id, "saved_for_later", "Prospect saved for a later wave.", today);
+      await run("UPDATE prospects SET status = 'saved_for_later', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await completeAllOpenTasks(id);
+      await addEvent(id, "saved_for_later", "Prospect saved for a later wave.", today);
     } else if (intent === "switchToWithNoteMode") {
-      db.prepare("UPDATE prospects SET outreach_mode = 'with_note', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      addEvent(id, "with_note_mode_selected", "With-note outreach mode selected.", today);
+      await run("UPDATE prospects SET outreach_mode = 'with_note', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await addEvent(id, "with_note_mode_selected", "With-note outreach mode selected.", today);
     } else {
       throw new Error(`Unknown action ${intent}`);
     }
-    db.exec("COMMIT");
   } catch (error) {
-    db.exec("ROLLBACK");
     throw error;
   }
 }
@@ -702,55 +698,35 @@ Was the issue the topic choice, the format, or the type of signal surfaced? That
 
 What would make this more useful for the kind of policy or communications work you do?`;
 }
-function importAnalyzedProspects(items) {
-  const db = getDb();
+async function importAnalyzedProspects(items) {
   const today = todayIso();
-  const upsertProspect = db.prepare(`
-    INSERT INTO prospects (
-      name, position, profile_url, about, priority_tag, wave, contact_now,
-      rationale, recommended_template, notes, status
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(profile_url) DO UPDATE SET
-      name = excluded.name,
-      position = excluded.position,
-      about = excluded.about,
-      priority_tag = excluded.priority_tag,
-      wave = excluded.wave,
-      contact_now = excluded.contact_now,
-      rationale = excluded.rationale,
-      recommended_template = excluded.recommended_template,
-      notes = excluded.notes,
-      status = CASE
-        WHEN prospects.status IN ('connection_sent', 'accepted', 'report_sent', 'followup_sent') THEN prospects.status
-        ELSE excluded.status
-      END,
-      updated_at = CURRENT_TIMESTAMP
-  `);
-  const getProspect = db.prepare("SELECT id, status FROM prospects WHERE profile_url = ?");
-  const upsertBrief = db.prepare(`
-    INSERT INTO briefs (prospect_id, topic, preparation_notes)
-    VALUES (?, ?, ?)
-    ON CONFLICT(prospect_id) DO UPDATE SET
-      topic = excluded.topic,
-      preparation_notes = excluded.preparation_notes,
-      updated_at = CURRENT_TIMESTAMP
-  `);
-  const upsertMessage = db.prepare(`
-    INSERT INTO messages (prospect_id, type, content, due_date, sent_date)
-    VALUES (?, ?, ?, ?, NULL)
-    ON CONFLICT(prospect_id, type) DO UPDATE SET
-      content = excluded.content,
-      due_date = excluded.due_date,
-      updated_at = CURRENT_TIMESTAMP
-  `);
-  db.exec("BEGIN");
   try {
     for (const raw of items) {
       const item = normalizeAnalyzedProspect(raw);
       if (!item.name || !item.profileUrl) continue;
       const status = statusForImportedProspect(item);
-      upsertProspect.run(
+      await run(`
+        INSERT INTO prospects (
+          name, position, profile_url, about, priority_tag, wave, contact_now,
+          rationale, recommended_template, notes, status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(profile_url) DO UPDATE SET
+          name = excluded.name,
+          position = excluded.position,
+          about = excluded.about,
+          priority_tag = excluded.priority_tag,
+          wave = excluded.wave,
+          contact_now = excluded.contact_now,
+          rationale = excluded.rationale,
+          recommended_template = excluded.recommended_template,
+          notes = excluded.notes,
+          status = CASE
+            WHEN prospects.status IN ('connection_sent', 'accepted', 'report_sent', 'followup_sent', 'conversation_active', 'reply_sent', 'archived') THEN prospects.status
+            ELSE excluded.status
+          END,
+          updated_at = CURRENT_TIMESTAMP
+      `, [
         item.name,
         item.position,
         item.profileUrl,
@@ -762,102 +738,126 @@ function importAnalyzedProspects(items) {
         item.recommendedTemplate,
         "",
         status
-      );
-      const prospect = getProspect.get(item.profileUrl);
+      ]);
+      const prospect = await one("SELECT id, status FROM prospects WHERE profile_url = ?", [item.profileUrl]);
+      if (!prospect) continue;
       if (item.briefTopic) {
-        upsertBrief.run(prospect.id, item.briefTopic, item.briefPreparation);
+        await run(`
+          INSERT INTO briefs (prospect_id, topic, preparation_notes)
+          VALUES (?, ?, ?)
+          ON CONFLICT(prospect_id) DO UPDATE SET
+            topic = excluded.topic,
+            preparation_notes = excluded.preparation_notes,
+            updated_at = CURRENT_TIMESTAMP
+        `, [prospect.id, item.briefTopic, item.briefPreparation]);
       }
       if (item.connectionMessage) {
-        upsertMessage.run(prospect.id, "connection", item.connectionMessage, null);
+        await upsertGeneratedMessage(prospect.id, "connection", item.connectionMessage, null);
       }
       if (item.reportMessage) {
-        upsertMessage.run(prospect.id, "report", item.reportMessage, null);
+        await upsertGeneratedMessage(prospect.id, "report", item.reportMessage, null);
       }
       if (item.noNoteReportMessage) {
-        upsertMessage.run(prospect.id, "report_no_note", item.noNoteReportMessage, null);
+        await upsertGeneratedMessage(prospect.id, "report_no_note", item.noNoteReportMessage, null);
       }
       if (item.followupMessage) {
-        upsertMessage.run(prospect.id, "followup", item.followupMessage, null);
+        await upsertGeneratedMessage(prospect.id, "followup", item.followupMessage, null);
       }
       if (item.contactNow && status === "to_contact") {
-        createOpenTask(prospect.id, "send_connection", `Send connection request to ${item.name}`, today);
+        await createOpenTask(prospect.id, "send_connection", `Send connection request to ${item.name}`, today);
       }
-      addEvent(prospect.id, "batch_imported", `Analyzed as ${item.priorityTag}${item.wave ? ` wave ${item.wave}` : ""}.`, today);
+      await addEvent(prospect.id, "batch_imported", `Analyzed as ${item.priorityTag}${item.wave ? ` wave ${item.wave}` : ""}.`, today);
     }
-    db.exec("COMMIT");
   } catch (error) {
-    db.exec("ROLLBACK");
     throw error;
   }
 }
 function normalizeLinkedInUrl$1(value) {
   return value.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
 }
-function getDb() {
+async function getDb() {
   if (!database) {
+    loadLocalEnv$1();
     fs.mkdirSync(dataDir, { recursive: true });
-    database = new DatabaseSync(dbPath);
-    database.exec("PRAGMA foreign_keys = ON");
-    applyMigrations(database);
+    const url = process.env.DATABASE_URL || `file:${dbPath}`;
+    database = createClient({
+      url,
+      authToken: process.env.DATABASE_AUTH_TOKEN
+    });
+    databaseReady = applyMigrations(database);
   }
+  await databaseReady;
   return database;
 }
-function applyMigrations(db) {
-  db.exec(`
+async function applyMigrations(db) {
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version TEXT PRIMARY KEY,
       applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  const applied = new Set(db.prepare("SELECT version FROM schema_migrations").all().map((row) => row.version));
+  const appliedRows = await db.execute("SELECT version FROM schema_migrations");
+  const applied = new Set(appliedRows.rows.map((row) => row.version));
   const files = fs.readdirSync(migrationsDir).filter((file) => file.endsWith(".sql")).sort();
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
-    db.exec("BEGIN");
+    await db.execute("BEGIN");
     try {
-      db.exec(sql);
-      db.prepare("INSERT INTO schema_migrations (version) VALUES (?)").run(file);
-      db.exec("COMMIT");
+      await db.executeMultiple(sql);
+      await db.execute({ sql: "INSERT INTO schema_migrations (version) VALUES (?)", args: [file] });
+      await db.execute("COMMIT");
     } catch (error) {
-      db.exec("ROLLBACK");
+      await db.execute("ROLLBACK");
       throw error;
     }
   }
 }
-function createOpenTask(prospectId, type, title, dueDate) {
-  const db = getDb();
-  const existing = db.prepare("SELECT id FROM tasks WHERE prospect_id = ? AND type = ? AND status = 'open'").get(prospectId, type);
+async function createOpenTask(prospectId, type, title, dueDate) {
+  const existing = await one("SELECT id FROM tasks WHERE prospect_id = ? AND type = ? AND status = 'open'", [prospectId, type]);
   if (!existing) {
-    db.prepare("INSERT INTO tasks (prospect_id, type, title, due_date) VALUES (?, ?, ?, ?)").run(prospectId, type, title, dueDate);
+    await run("INSERT INTO tasks (prospect_id, type, title, due_date) VALUES (?, ?, ?, ?)", [prospectId, type, title, dueDate]);
   }
 }
-function completeOpenTask(prospectId, type) {
-  getDb().prepare(`
+async function completeOpenTask(prospectId, type) {
+  await run(`
     UPDATE tasks
     SET status = 'done', completed_at = ?, updated_at = CURRENT_TIMESTAMP
     WHERE prospect_id = ? AND type = ? AND status = 'open'
-  `).run(todayIso(), prospectId, type);
+  `, [todayIso(), prospectId, type]);
 }
-function completeAllOpenTasks(prospectId) {
-  getDb().prepare(`
+async function completeAllOpenTasks(prospectId) {
+  await run(`
     UPDATE tasks
     SET status = 'done', completed_at = ?, updated_at = CURRENT_TIMESTAMP
     WHERE prospect_id = ? AND status = 'open'
-  `).run(todayIso(), prospectId);
+  `, [todayIso(), prospectId]);
 }
-function upsertGeneratedMessage(prospectId, type, content, dueDate) {
-  getDb().prepare(`
+async function upsertGeneratedMessage(prospectId, type, content, dueDate) {
+  await run(`
     INSERT INTO messages (prospect_id, type, content, due_date, sent_date)
     VALUES (?, ?, ?, ?, NULL)
     ON CONFLICT(prospect_id, type) DO UPDATE SET
       content = excluded.content,
       due_date = excluded.due_date,
       updated_at = CURRENT_TIMESTAMP
-  `).run(prospectId, type, content, dueDate);
+  `, [prospectId, type, content, dueDate]);
 }
-function addEvent(prospectId, type, note, happenedAt) {
-  getDb().prepare("INSERT INTO events (prospect_id, type, note, happened_at) VALUES (?, ?, ?, ?)").run(prospectId, type, note, happenedAt);
+async function addEvent(prospectId, type, note, happenedAt) {
+  await run("INSERT INTO events (prospect_id, type, note, happened_at) VALUES (?, ?, ?, ?)", [prospectId, type, note, happenedAt]);
+}
+async function one(sql, args = []) {
+  const rows = await all(sql, args);
+  return rows[0];
+}
+async function all(sql, args = []) {
+  const db = await getDb();
+  const result = await db.execute({ sql, args });
+  return result.rows;
+}
+async function run(sql, args = []) {
+  const db = await getDb();
+  await db.execute({ sql, args });
 }
 function todayIso() {
   const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -918,7 +918,7 @@ function prospectContext$1(position, about, template) {
 }
 async function generateNoNoteRewrite(prospectId) {
   loadLocalEnv$1();
-  const detail = getProspectDetail(prospectId);
+  const detail = await getProspectDetail(prospectId);
   if (!detail) throw new Error("Prospect not found");
   const { prospect } = detail;
   const apiKey = process.env.OPENROUTER_API_KEY;
@@ -973,6 +973,10 @@ TASK
 - The first message must naturally acknowledge the new connection and introduce the brief.
 - Make the first message feel written for this exact person, not a reusable template.
 - Use the prospect's role, organization context, about section, rationale, recommendedTemplate and briefTopic to choose one concrete angle.
+- Treat activity evidence carefully: reposts, likes, comments, and visible activity prove interest only, not professional ownership.
+- Do not say "your work on [topic]" unless role/about/experience explicitly says the prospect works on that topic.
+- If the topic comes from a repost or recent activity, say "your recent interest in [topic]", "a topic you recently shared", or "given the policy issues visible in your activity".
+- In the message, distinguish professional role fit from activity signal. Never turn a repost into "your professional domain".
 - Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format. Do not make this a product pitch.
 - Explain why this brief is relevant to their world in one specific phrase.
 - Ask for feedback on the angle, signal quality, or format. Do not ask for "thoughts" generically.
@@ -980,7 +984,7 @@ TASK
 - It must be 5 lines max.
 - It must not say "as promised", "the brief I mentioned", "as I mentioned", or imply that a note was sent.
 - Avoid generic filler: "key topics", "professionals like yourself", "might be of interest", "any initial thoughts", "greatly appreciated".
-- Rewrite the follow-up for 5 days later. It should still be gentle and should not refer to a promised brief.
+- Rewrite the follow-up for 2 days later. It should still be gentle and should not refer to a promised brief.
 
 OUTPUT JSON SHAPE
 {
@@ -1103,8 +1107,8 @@ const meta$4 = () => [{
   name: "description",
   content: "Internal Tempolis outreach tracker."
 }];
-function loader$2() {
-  return getDashboard();
+async function loader$2() {
+  return await getDashboard();
 }
 async function action$3({
   request
@@ -1190,6 +1194,7 @@ const home = UNSAFE_withComponentProps(function Home() {
             }), /* @__PURE__ */ jsxs("div", {
               className: "mt-3 grid gap-3",
               children: [/* @__PURE__ */ jsx(TodayPanel, {
+                storageKey: "connect-today",
                 title: "Connect today",
                 items: data2.sections.toConnect,
                 children: (task) => {
@@ -1200,6 +1205,7 @@ const home = UNSAFE_withComponentProps(function Home() {
                   }) : null;
                 }
               }), /* @__PURE__ */ jsx(TodayPanel, {
+                storageKey: "accepted-report",
                 title: "Accepted, report to send",
                 items: data2.sections.acceptedReport,
                 children: (prospect) => /* @__PURE__ */ jsx(DashboardTaskLink, {
@@ -1207,6 +1213,7 @@ const home = UNSAFE_withComponentProps(function Home() {
                   detail: "Connection accepted, report to send"
                 })
               }), /* @__PURE__ */ jsx(TodayPanel, {
+                storageKey: "brief-urls-missing",
                 title: "Brief URLs missing",
                 items: data2.sections.missingBriefUrls,
                 children: (prospect) => /* @__PURE__ */ jsx(DashboardTaskLink, {
@@ -1214,6 +1221,7 @@ const home = UNSAFE_withComponentProps(function Home() {
                   detail: `Prepare brief URL for ${prospect.brief_topic || "brief"}`
                 })
               }), /* @__PURE__ */ jsx(TodayPanel, {
+                storageKey: "followups-due",
                 title: "Follow-ups due",
                 items: data2.sections.followupsDue,
                 children: (task) => {
@@ -1224,6 +1232,7 @@ const home = UNSAFE_withComponentProps(function Home() {
                   }) : null;
                 }
               }), /* @__PURE__ */ jsx(TodayPanel, {
+                storageKey: "followups-scheduled",
                 title: "Follow-ups scheduled",
                 items: data2.sections.followupsScheduled,
                 children: (task) => {
@@ -1234,6 +1243,7 @@ const home = UNSAFE_withComponentProps(function Home() {
                   }) : null;
                 }
               }), /* @__PURE__ */ jsx(TodayPanel, {
+                storageKey: "active-conversations",
                 title: "Active conversations",
                 items: data2.sections.conversationsActive,
                 children: (prospect) => /* @__PURE__ */ jsx(DashboardTaskLink, {
@@ -1241,6 +1251,7 @@ const home = UNSAFE_withComponentProps(function Home() {
                   detail: "Prospect replied, conversation in progress"
                 })
               }), /* @__PURE__ */ jsx(TodayPanel, {
+                storageKey: "pending-connections",
                 title: "Pending connections",
                 items: data2.sections.pendingConnections,
                 children: (prospect) => /* @__PURE__ */ jsx(DashboardTaskLink, {
@@ -1249,10 +1260,18 @@ const home = UNSAFE_withComponentProps(function Home() {
                 })
               })]
             })]
-          }), /* @__PURE__ */ jsxs("section", {
-            children: [/* @__PURE__ */ jsx(SectionTitle$1, {
-              title: "Prospects in progress",
-              detail: `${activeProspects.length} profiles in the working set.`
+          }), /* @__PURE__ */ jsxs(PersistentDetails, {
+            storageKey: "prospects-in-progress",
+            defaultOpen: activeProspects.length > 0,
+            children: [/* @__PURE__ */ jsxs("summary", {
+              className: "flex cursor-pointer list-none items-end justify-between gap-3",
+              children: [/* @__PURE__ */ jsx(SectionTitle$1, {
+                title: "Prospects in progress",
+                detail: `${activeProspects.length} profiles in the working set.`
+              }), /* @__PURE__ */ jsx(Badge$3, {
+                tone: activeProspects.length ? "blue" : "green",
+                children: activeProspects.length
+              })]
             }), /* @__PURE__ */ jsx(ProspectsTable, {
               prospects: activeProspects
             })]
@@ -1287,17 +1306,20 @@ function DashboardTaskLink({
   prospect,
   detail
 }) {
-  return /* @__PURE__ */ jsxs(Link$1, {
-    to: `/prospects/${prospect.id}`,
+  return /* @__PURE__ */ jsxs("div", {
     className: "grid gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3 hover:border-teal-700 md:grid-cols-[1fr_auto] md:items-center",
-    children: [/* @__PURE__ */ jsx(TaskIntro, {
-      icon: /* @__PURE__ */ jsx(Clock, {
-        size: 18
-      }),
-      title: prospect.name,
-      detail
+    children: [/* @__PURE__ */ jsx(Link$1, {
+      to: `/prospects/${prospect.id}`,
+      className: "block",
+      children: /* @__PURE__ */ jsx(TaskIntro, {
+        icon: /* @__PURE__ */ jsx(Clock, {
+          size: 18
+        }),
+        title: prospect.name,
+        detail
+      })
     }), /* @__PURE__ */ jsxs("div", {
-      className: "flex flex-wrap gap-2",
+      className: "flex flex-wrap items-center gap-2",
       children: [/* @__PURE__ */ jsx(Badge$3, {
         children: prospect.priority_tag
       }), /* @__PURE__ */ jsx(Badge$3, {
@@ -1306,6 +1328,16 @@ function DashboardTaskLink({
       }), /* @__PURE__ */ jsx(Badge$3, {
         tone: "blue",
         children: prospect.status
+      }), /* @__PURE__ */ jsx("a", {
+        href: prospect.profile_url,
+        target: "_blank",
+        rel: "noreferrer",
+        "aria-label": `Open ${prospect.name} on LinkedIn`,
+        title: "Open LinkedIn profile",
+        className: "inline-flex size-7 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-600 hover:border-teal-700 hover:text-teal-800",
+        children: /* @__PURE__ */ jsx(ExternalLink, {
+          size: 14
+        })
       })]
     })]
   });
@@ -1413,14 +1445,16 @@ function SectionTitle$1({
   });
 }
 function TodayPanel({
+  storageKey,
   title,
   items,
   children
 }) {
   const defaultOpen = items.length > 0;
-  return /* @__PURE__ */ jsxs("details", {
+  return /* @__PURE__ */ jsxs(PersistentDetails, {
+    storageKey: `today-${storageKey}`,
+    defaultOpen,
     className: "rounded-lg border border-stone-300 bg-white p-4",
-    open: defaultOpen,
     children: [/* @__PURE__ */ jsxs("summary", {
       className: "flex cursor-pointer list-none items-center justify-between gap-3",
       children: [/* @__PURE__ */ jsx("h3", {
@@ -1436,6 +1470,30 @@ function TodayPanel({
         children: children(item)
       }, index)) : /* @__PURE__ */ jsx(EmptyState$1, {})
     })]
+  });
+}
+function PersistentDetails({
+  storageKey,
+  defaultOpen,
+  className,
+  children
+}) {
+  const key = `outreach.dashboard.details.${storageKey}`;
+  const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => {
+    const saved = window.localStorage.getItem(key);
+    if (saved === "open") setOpen(true);
+    if (saved === "closed") setOpen(false);
+  }, [key]);
+  return /* @__PURE__ */ jsx("details", {
+    className,
+    open,
+    onToggle: (event) => {
+      const next = event.currentTarget.open;
+      setOpen(next);
+      window.localStorage.setItem(key, next ? "open" : "closed");
+    },
+    children
   });
 }
 function TaskIntro({
@@ -1587,6 +1645,11 @@ TASK
 - A brief topic is not the prospect's broad profession. It must be a concrete Tempolis brief subject: a figure, movement, issue, policy, controversy, narrative risk, or public debate.
 - Never use vague discipline labels as briefTopic: "public policy", "policy", "communications", "public affairs", "EU affairs", "regulation", "strategy".
 - If the user provides briefDirection, treat it as the strongest hint. If they provide signals/recent posts, use them to choose the topic.
+- Treat activity evidence carefully:
+  - A repost, like, comment, or visible activity is evidence of recent interest only, not proof that the prospect works on that topic.
+  - Do not write "your work on [topic]" unless the role/about/experience explicitly says they work on that topic.
+  - For repost-derived topics, use wording like "your recent interest in [topic]", "a topic you recently shared", or "given the policy issues visible in your activity".
+  - In briefPreparation, distinguish "profile evidence" from "activity signal"; do not claim a subject is in their professional domain based only on a repost.
 - Good briefTopic examples: "AI Act", "Energy security", "Tech backlash", "EU competitiveness", "Strategic autonomy", "Narrative risk", "Trade tensions".
 - Respect the outreach rule: no product pitch, no demo/call request, short connection note under 300 characters.
 - Generate two post-acceptance variants:
@@ -1595,10 +1658,10 @@ TASK
 - Make noNoteReportMessage genuinely adapted to the prospect:
   - Use their role, company context, about field, signals, briefDirection, rationale, recommendedTemplate and briefTopic to pick one concrete angle.
   - Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format.
-  - Explain why the brief is relevant to their world in one specific phrase.
+  - Explain why the brief may be relevant in one specific phrase, but do not overclaim the prospect's work from reposts or activity.
   - Ask for feedback on angle, signal quality, or format, not generic "thoughts".
   - Avoid filler phrases: "key topics", "professionals like yourself", "might be of interest", "any initial thoughts", "greatly appreciated".
-- Generate the J+5 follow-up.
+- Generate the J+2 follow-up.
 - Do not invent facts beyond the profile fields.
 
 OUTPUT JSON SHAPE
@@ -1845,7 +1908,7 @@ async function action$2({
   const table = String(formData.get("table") || "");
   try {
     const analysis = await analyzeProspectTable(table);
-    importAnalyzedProspects(analysis.prospects);
+    await importAnalyzedProspects(analysis.prospects);
     return {
       ok: true,
       analysis
@@ -2210,7 +2273,7 @@ function ActionCard({
       title: "After acceptance, without note",
       value: prospect.noNoteReportMessage
     }), /* @__PURE__ */ jsx(Message, {
-      title: "Follow-up J+5",
+      title: "Follow-up J+2",
       value: prospect.followupMessage
     })]
   });
@@ -2561,8 +2624,8 @@ const meta$1 = () => [{
   name: "description",
   content: "Search prospects already stored in the outreach CRM."
 }];
-function loader$1() {
-  return getDashboard();
+async function loader$1() {
+  return await getDashboard();
 }
 const search = UNSAFE_withComponentProps(function SearchCrmPage() {
   const data2 = useLoaderData();
@@ -2783,9 +2846,9 @@ async function action$1({
       headers: corsHeaders()
     });
   }
-  const existingId = findProspectByProfileUrl(profileUrl);
+  const existingId = await findProspectByProfileUrl(profileUrl);
   if (existingId) {
-    setProspectOutreachPreference(existingId, normalizeOutreachMode(payload.outreachMode));
+    await setProspectOutreachPreference(existingId, normalizeOutreachMode(payload.outreachMode));
     return respond(payload, existingId, true);
   }
   const table = prospectEvidenceToTable({
@@ -2793,8 +2856,8 @@ async function action$1({
     profileUrl
   });
   const analysis = await analyzeProspectTable(table);
-  importAnalyzedProspects(analysis.prospects);
-  const id = findProspectByProfileUrl(profileUrl);
+  await importAnalyzedProspects(analysis.prospects);
+  const id = await findProspectByProfileUrl(profileUrl);
   if (!id) {
     return data({
       ok: false,
@@ -2804,7 +2867,7 @@ async function action$1({
       headers: corsHeaders()
     });
   }
-  setProspectOutreachPreference(id, normalizeOutreachMode(payload.outreachMode));
+  await setProspectOutreachPreference(id, normalizeOutreachMode(payload.outreachMode));
   return respond(payload, id, false);
 }
 function respond(payload, id, existing) {
@@ -2851,11 +2914,11 @@ const meta = ({
     title: `${name} · Tempolis Outreach`
   }];
 };
-function loader({
+async function loader({
   params
 }) {
   const id = Number(params.id);
-  const detail = getProspectDetail(id);
+  const detail = await getProspectDetail(id);
   if (!detail) {
     throw new Response("Prospect not found", {
       status: 404
@@ -3076,11 +3139,21 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
                 })]
               })]
             })
-          }), /* @__PURE__ */ jsx(CollapsibleSection, {
+          }), /* @__PURE__ */ jsxs(CollapsibleSection, {
             title: "Messages",
             detail: "Copy exact LinkedIn copy.",
             defaultOpen: !archiveMode,
-            children: /* @__PURE__ */ jsxs("div", {
+            children: [/* @__PURE__ */ jsx("div", {
+              className: "mt-4 flex flex-wrap gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3",
+              children: /* @__PURE__ */ jsx(ActionButton, {
+                intent: "regenerateSaferCopy",
+                prospectId: prospect.id,
+                label: "Regenerate safer copy",
+                icon: /* @__PURE__ */ jsx(RefreshCw, {
+                  size: 16
+                })
+              })
+            }), /* @__PURE__ */ jsxs("div", {
               className: "mt-4 grid gap-3",
               children: [showConnectionNote ? /* @__PURE__ */ jsx(MessageEditor, {
                 prospectId: prospect.id,
@@ -3096,11 +3169,11 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
                 locked: reportLocked
               }), /* @__PURE__ */ jsx(MessageEditor, {
                 prospectId: prospect.id,
-                title: "Follow-up J+5",
+                title: "Follow-up J+2",
                 type: "followup",
                 content: prospect.followup_message
               })]
-            })
+            })]
           }), /* @__PURE__ */ jsxs("section", {
             className: "rounded-lg border border-stone-300 bg-white p-5",
             children: [/* @__PURE__ */ jsx(SectionTitle, {
@@ -3686,7 +3759,7 @@ const route6 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   loader,
   meta
 }, Symbol.toStringTag, { value: "Module" }));
-const serverManifest = { "entry": { "module": "/assets/entry.client-BxWr3UUB.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-DiSo3ncW.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/createLucideIcon-Da8AtwYQ.js"], "css": ["/assets/root-CDxTgHIL.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-_va8lzb9.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/search-B8EuDsim.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/plus-DekOuVBV.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/batch": { "id": "routes/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-C3m1nKsO.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/plus-DekOuVBV.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/send-CLyZgDQb.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-vMK4XIAM.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/search-B8EuDsim.js", "/assets/external-link-D2Duvbm5.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/search": { "id": "routes/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-DsqpW5Fb.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/search-B8EuDsim.js", "/assets/external-link-D2Duvbm5.js", "/assets/createLucideIcon-Da8AtwYQ.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.prospect": { "id": "routes/api.extension.prospect", "parentId": "root", "path": "api/extension/prospect", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.prospect-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "root", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-PwZR9MTq.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/external-link-D2Duvbm5.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/send-CLyZgDQb.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-c4b37dea.js", "version": "c4b37dea", "sri": void 0 };
+const serverManifest = { "entry": { "module": "/assets/entry.client-BxWr3UUB.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-BOsedW8b.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/createLucideIcon-Da8AtwYQ.js"], "css": ["/assets/root-dVqg4afR.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-DOLZ5VI6.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/search-B8EuDsim.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/plus-DekOuVBV.js", "/assets/external-link-D2Duvbm5.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/batch": { "id": "routes/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-BMfyDS67.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/plus-DekOuVBV.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/send-CLyZgDQb.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-vMK4XIAM.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/search-B8EuDsim.js", "/assets/external-link-D2Duvbm5.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/search": { "id": "routes/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-DsqpW5Fb.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/search-B8EuDsim.js", "/assets/external-link-D2Duvbm5.js", "/assets/createLucideIcon-Da8AtwYQ.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.prospect": { "id": "routes/api.extension.prospect", "parentId": "root", "path": "api/extension/prospect", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.prospect-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "root", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-Z5N0ydW6.js", "imports": ["/assets/chunk-OE4NN4TA-fMx4Acsk.js", "/assets/arrow-left-DXctcFHN.js", "/assets/external-link-D2Duvbm5.js", "/assets/createLucideIcon-Da8AtwYQ.js", "/assets/send-CLyZgDQb.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-4443a289.js", "version": "4443a289", "sri": void 0 };
 const assetsBuildDirectory = "build/client";
 const basename = "/";
 const future = { "unstable_optimizeDeps": false, "unstable_passThroughRequests": false, "unstable_subResourceIntegrity": false, "unstable_trailingSlashAwareDataRequests": false, "unstable_previewServerPrerendering": false, "v8_middleware": true, "v8_splitRouteModules": false, "v8_viteEnvironmentApi": false };

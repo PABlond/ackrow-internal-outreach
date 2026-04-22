@@ -153,6 +153,11 @@ TASK
 - A brief topic is not the prospect's broad profession. It must be a concrete Tempolis brief subject: a figure, movement, issue, policy, controversy, narrative risk, or public debate.
 - Never use vague discipline labels as briefTopic: "public policy", "policy", "communications", "public affairs", "EU affairs", "regulation", "strategy".
 - If the user provides briefDirection, treat it as the strongest hint. If they provide signals/recent posts, use them to choose the topic.
+- Treat activity evidence carefully:
+  - A repost, like, comment, or visible activity is evidence of recent interest only, not proof that the prospect works on that topic.
+  - Do not write "your work on [topic]" unless the role/about/experience explicitly says they work on that topic.
+  - For repost-derived topics, use wording like "your recent interest in [topic]", "a topic you recently shared", or "given the policy issues visible in your activity".
+  - In briefPreparation, distinguish "profile evidence" from "activity signal"; do not claim a subject is in their professional domain based only on a repost.
 - Good briefTopic examples: "AI Act", "Energy security", "Tech backlash", "EU competitiveness", "Strategic autonomy", "Narrative risk", "Trade tensions".
 - Respect the outreach rule: no product pitch, no demo/call request, short connection note under 300 characters.
 - Generate two post-acceptance variants:
@@ -161,10 +166,10 @@ TASK
 - Make noNoteReportMessage genuinely adapted to the prospect:
   - Use their role, company context, about field, signals, briefDirection, rationale, recommendedTemplate and briefTopic to pick one concrete angle.
   - Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format.
-  - Explain why the brief is relevant to their world in one specific phrase.
+  - Explain why the brief may be relevant in one specific phrase, but do not overclaim the prospect's work from reposts or activity.
   - Ask for feedback on angle, signal quality, or format, not generic "thoughts".
   - Avoid filler phrases: "key topics", "professionals like yourself", "might be of interest", "any initial thoughts", "greatly appreciated".
-- Generate the J+5 follow-up.
+- Generate the J+2 follow-up.
 - Do not invent facts beyond the profile fields.
 
 OUTPUT JSON SHAPE

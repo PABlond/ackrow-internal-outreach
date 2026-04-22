@@ -9,9 +9,9 @@ export const meta: Route.MetaFunction = ({ data }) => {
   return [{ title: `${name} · Tempolis Outreach` }];
 };
 
-export function loader({ params }: Route.LoaderArgs) {
+export async function loader({ params }: Route.LoaderArgs) {
   const id = Number(params.id);
-  const detail = getProspectDetail(id);
+  const detail = await getProspectDetail(id);
   if (!detail) {
     throw new Response("Prospect not found", { status: 404 });
   }
@@ -151,6 +151,9 @@ export default function ProspectDetail() {
             </CollapsibleSection>
 
             <CollapsibleSection title="Messages" detail="Copy exact LinkedIn copy." defaultOpen={!archiveMode}>
+              <div className="mt-4 flex flex-wrap gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3">
+                <ActionButton intent="regenerateSaferCopy" prospectId={prospect.id} label="Regenerate safer copy" icon={<RefreshCw size={16} />} />
+              </div>
               <div className="mt-4 grid gap-3">
                 {showConnectionNote ? <MessageEditor prospectId={prospect.id} title="Connection note" type="connection" content={prospect.connection_message} locked={connectionLocked} /> : <NoNoteCallout />}
                 <MessageEditor
@@ -160,7 +163,7 @@ export default function ProspectDetail() {
                   content={prospect.post_acceptance_message}
                   locked={reportLocked}
                 />
-                <MessageEditor prospectId={prospect.id} title="Follow-up J+5" type="followup" content={prospect.followup_message} />
+                <MessageEditor prospectId={prospect.id} title="Follow-up J+2" type="followup" content={prospect.followup_message} />
               </div>
             </CollapsibleSection>
 

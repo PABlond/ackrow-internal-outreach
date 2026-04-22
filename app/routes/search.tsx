@@ -21,8 +21,8 @@ export const meta: Route.MetaFunction = () => [
   { name: "description", content: "Search prospects already stored in the outreach CRM." },
 ];
 
-export function loader() {
-  return getDashboard();
+export async function loader() {
+  return await getDashboard();
 }
 
 export default function SearchCrmPage() {

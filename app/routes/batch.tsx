@@ -21,7 +21,7 @@ export async function action({ request }: Route.ActionArgs): Promise<ActionData>
 
   try {
     const analysis = await analyzeProspectTable(table);
-    importAnalyzedProspects(analysis.prospects);
+    await importAnalyzedProspects(analysis.prospects);
     return { ok: true, analysis };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Unknown error" };
@@ -266,7 +266,7 @@ function ActionCard({ prospect }: { prospect: BatchAnalysis["prospects"][number]
       <Message title="Connection note" value={prospect.connectionMessage} />
       <Message title="After acceptance, with note" value={prospect.reportMessage} />
       <Message title="After acceptance, without note" value={prospect.noNoteReportMessage} />
-      <Message title="Follow-up J+5" value={prospect.followupMessage} />
+      <Message title="Follow-up J+2" value={prospect.followupMessage} />
     </article>
   );
 }

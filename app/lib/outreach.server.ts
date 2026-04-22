@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import { createClient, type Client, type InValue } from "@libsql/client";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,8 @@ const dataDir = path.join(rootDir, "data");
 const dbPath = path.join(dataDir, "outreach.sqlite");
 const migrationsDir = path.join(rootDir, "db", "migrations");
 
-let database: DatabaseSync | undefined;
+let database: Client | undefined;
+let databaseReady: Promise<void> | undefined;
 
 export type Prospect = {
   id: number;
@@ -30,6 +31,8 @@ export type Prospect = {
   accepted_date: string | null;
   report_sent_date: string | null;
   followup_sent_date: string | null;
+  pending_checked_at: string | null;
+  connection_last_state: string | null;
   brief_topic: string | null;
   preparation_notes: string | null;
   shared_url: string | null;
@@ -97,21 +100,73 @@ export type Reply = {
   updated_at: string;
 };
 
-export function findProspectByProfileUrl(profileUrl: string) {
-  const row = getDb().prepare("SELECT id FROM prospects WHERE profile_url = ?").get(normalizeLinkedInUrl(profileUrl)) as { id: number } | undefined;
+export type ExtensionPendingConnection = {
+  id: number;
+  name: string;
+  position: string | null;
+  profile_url: string;
+  outreach_mode: "with_note" | "no_note";
+  connection_sent_date: string | null;
+  pending_checked_at: string | null;
+  connection_last_state: string | null;
+};
+
+export async function findProspectByProfileUrl(profileUrl: string) {
+  const row = await one<{ id: number }>("SELECT id FROM prospects WHERE profile_url = ?", [normalizeLinkedInUrl(profileUrl)]);
   return row?.id || null;
 }
 
-export function setProspectOutreachPreference(id: number, mode: "with_note" | "no_note") {
-  const db = getDb();
+export async function setProspectOutreachPreference(id: number, mode: "with_note" | "no_note") {
   const today = todayIso();
-  db.prepare("UPDATE prospects SET outreach_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(mode, id);
-  addEvent(id, mode === "no_note" ? "no_note_mode_selected" : "with_note_mode_selected", `Extension selected ${mode === "no_note" ? "no-note" : "with-note"} outreach mode.`, today);
+  await run("UPDATE prospects SET outreach_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [mode, id]);
+  await addEvent(id, mode === "no_note" ? "no_note_mode_selected" : "with_note_mode_selected", `Extension selected ${mode === "no_note" ? "no-note" : "with-note"} outreach mode.`, today);
 }
 
-export function getProspectDetail(id: number) {
-  const db = getDb();
-  const prospect = db.prepare(`
+export async function getExtensionDashboard() {
+  const pendingConnections = await all<ExtensionPendingConnection>(`
+    SELECT id, name, position, profile_url, outreach_mode, connection_sent_date, pending_checked_at, connection_last_state
+    FROM prospects
+    WHERE status = 'connection_sent'
+    ORDER BY
+      CASE WHEN pending_checked_at IS NULL THEN 0 ELSE 1 END,
+      pending_checked_at,
+      COALESCE(connection_sent_date, '9999-12-31'),
+      name
+  `);
+
+  return {
+    today: todayIso(),
+    pendingConnections,
+  };
+}
+
+export async function syncProspectConnectionState(id: number, state: "accepted" | "declined" | "pending") {
+  const today = todayIso();
+  const prospect = await one<Pick<Prospect, "id" | "name" | "status">>("SELECT id, name, status FROM prospects WHERE id = ?", [id]);
+  if (!prospect) {
+    throw new Error("Unknown prospect");
+  }
+
+  if (state === "pending") {
+    await run("UPDATE prospects SET pending_checked_at = CURRENT_TIMESTAMP, connection_last_state = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+    return;
+  }
+
+  if (state === "accepted") {
+    await run("UPDATE prospects SET status = 'accepted', accepted_date = ?, connection_last_state = 'accepted', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+    await completeOpenTask(id, "watch_acceptance");
+    await createOpenTask(id, "send_report", `Send first message to ${prospect.name}`, today);
+    await addEvent(id, "accepted", "LinkedIn connection accepted. Synced from extension.", today);
+    return;
+  }
+
+  await run("UPDATE prospects SET status = 'archived_declined', connection_last_state = 'declined', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+  await completeAllOpenTasks(id);
+  await addEvent(id, "archived_declined", "Connection no longer pending on LinkedIn. Synced from extension.", today);
+}
+
+export async function getProspectDetail(id: number) {
+  const prospect = await one<Prospect>(`
     SELECT
       p.*,
       b.topic AS brief_topic,
@@ -129,11 +184,11 @@ export function getProspectDetail(id: number) {
     LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
     LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
     WHERE p.id = ?
-  `).get(id) as Prospect | undefined;
+  `, [id]);
 
   if (!prospect) return null;
 
-  const tasks = db.prepare(`
+  const tasks = await all<Task>(`
     SELECT t.*, p.name, p.profile_url
     FROM tasks t
     LEFT JOIN prospects p ON p.id = t.prospect_id
@@ -142,30 +197,29 @@ export function getProspectDetail(id: number) {
       CASE t.status WHEN 'open' THEN 0 ELSE 1 END,
       COALESCE(t.due_date, '9999-12-31'),
       t.created_at
-  `).all(id) as Task[];
+  `, [id]);
 
-  const events = db.prepare(`
+  const events = await all<Event>(`
     SELECT e.*, p.name
     FROM events e
     LEFT JOIN prospects p ON p.id = e.prospect_id
     WHERE e.prospect_id = ?
     ORDER BY e.happened_at DESC, e.id DESC
-  `).all(id) as Event[];
+  `, [id]);
 
-  const replies = db.prepare(`
+  const replies = await all<Reply>(`
     SELECT *
     FROM replies
     WHERE prospect_id = ?
     ORDER BY created_at DESC, id DESC
-  `).all(id) as Reply[];
+  `, [id]);
 
   return { prospect: withDerivedMessages(prospect), tasks, events, replies, today: todayIso() };
 }
 
-export function getDashboard() {
-  const db = getDb();
+export async function getDashboard() {
   const today = todayIso();
-  const prospectRows = db.prepare(`
+  const prospectRows = await all<Prospect>(`
     SELECT
       p.*,
       b.topic AS brief_topic,
@@ -198,10 +252,10 @@ export function getDashboard() {
       END,
       p.wave,
       p.name
-  `).all() as Prospect[];
+  `);
   const prospects = prospectRows.map(withDerivedMessages);
 
-  const tasks = db.prepare(`
+  const tasks = await all<Task>(`
     SELECT t.*, p.name, p.profile_url
     FROM tasks t
     LEFT JOIN prospects p ON p.id = t.prospect_id
@@ -209,15 +263,15 @@ export function getDashboard() {
       CASE WHEN t.due_date IS NOT NULL AND t.due_date < ? THEN 0 ELSE 1 END,
       COALESCE(t.due_date, '9999-12-31'),
       t.created_at
-  `).all(today) as Task[];
+  `, [today]);
 
-  const events = db.prepare(`
+  const events = await all<Event>(`
     SELECT e.*, p.name
     FROM events e
     LEFT JOIN prospects p ON p.id = e.prospect_id
     ORDER BY e.happened_at DESC, e.id DESC
     LIMIT 100
-  `).all() as Event[];
+  `);
 
   return {
     today,
@@ -246,82 +300,82 @@ export function getDashboard() {
 export async function runProspectAction(formData: FormData) {
   const id = Number(formData.get("prospectId"));
   const intent = String(formData.get("intent") || "");
-  const db = getDb();
-  const prospect = db.prepare("SELECT * FROM prospects WHERE id = ?").get(id) as Pick<Prospect, "name" | "position" | "about" | "recommended_template"> | undefined;
+  const prospect = await one<Pick<Prospect, "name" | "position" | "about" | "recommended_template">>("SELECT * FROM prospects WHERE id = ?", [id]);
 
   if (!id || !prospect) {
     throw new Error("Unknown prospect");
   }
 
   const today = todayIso();
-  if (intent === "generateNoNoteMode") {
+  if (intent === "generateNoNoteMode" || intent === "regenerateSaferCopy") {
     const rewrite = await generateNoNoteRewrite(id);
-    db.exec("BEGIN");
     try {
-      db.prepare("UPDATE prospects SET outreach_mode = 'no_note', connection_note_sent = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      upsertGeneratedMessage(id, "report_no_note", rewrite.noNoteReportMessage, null);
-      upsertGeneratedMessage(id, "followup", rewrite.followupMessage, null);
-      addEvent(id, "no_note_mode_generated", "No-note outreach mode generated with AI.", today);
-      db.exec("COMMIT");
+      await run("UPDATE prospects SET outreach_mode = 'no_note', connection_note_sent = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await upsertGeneratedMessage(id, "report_no_note", rewrite.noNoteReportMessage, null);
+      await upsertGeneratedMessage(id, "followup", rewrite.followupMessage, null);
+      await addEvent(
+        id,
+        intent === "regenerateSaferCopy" ? "safer_copy_regenerated" : "no_note_mode_generated",
+        intent === "regenerateSaferCopy" ? "Safer no-note copy regenerated with activity-signal guardrails." : "No-note outreach mode generated with AI.",
+        today,
+      );
     } catch (error) {
-      db.exec("ROLLBACK");
       throw error;
     }
     return;
   }
 
-  db.exec("BEGIN");
   try {
     if (intent === "deleteProspect") {
-      completeAllOpenTasks(id);
-      db.prepare("DELETE FROM prospects WHERE id = ?").run(id);
+      await completeAllOpenTasks(id);
+      await run("DELETE FROM prospects WHERE id = ?", [id]);
     } else if (intent === "addProspectReply") {
       const inboundContent = String(formData.get("inboundContent") || "").trim();
       const suggestedResponse = String(formData.get("suggestedResponse") || "").trim() || replyFallback(prospect.name, inboundContent);
       if (!inboundContent) throw new Error("Reply content is required");
-      db.prepare("INSERT INTO replies (prospect_id, inbound_content, suggested_response) VALUES (?, ?, ?)").run(id, inboundContent, suggestedResponse);
-      db.prepare("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      completeOpenTask(id, "send_followup");
-      addEvent(id, "reply_received", "Prospect replied. Follow-up task closed.", today);
+      await run("INSERT INTO replies (prospect_id, inbound_content, suggested_response) VALUES (?, ?, ?)", [id, inboundContent, suggestedResponse]);
+      await run("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await completeOpenTask(id, "send_followup");
+      await addEvent(id, "reply_received", "Prospect replied. Follow-up task closed.", today);
     } else if (intent === "updateReplyResponse") {
       const replyId = Number(formData.get("replyId"));
       const suggestedResponse = String(formData.get("suggestedResponse") || "").trim();
       if (!replyId) throw new Error("Reply id is required");
       if (!suggestedResponse) throw new Error("Suggested response is required");
-      db.prepare("UPDATE replies SET suggested_response = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?").run(suggestedResponse, replyId, id);
-      addEvent(id, "reply_response_updated", "Suggested response edited.", today);
+      await run("UPDATE replies SET suggested_response = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?", [suggestedResponse, replyId, id]);
+      await addEvent(id, "reply_response_updated", "Suggested response edited.", today);
     } else if (intent === "markReplySent") {
       const replyId = Number(formData.get("replyId"));
       if (!replyId) throw new Error("Reply id is required");
-      db.prepare("UPDATE replies SET sent_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?").run(today, replyId, id);
-      completeOpenTask(id, "send_followup");
-      db.prepare("UPDATE prospects SET status = 'reply_sent', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      addEvent(id, "reply_sent", "Reply sent to prospect.", today);
+      await run("UPDATE replies SET sent_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND prospect_id = ?", [today, replyId, id]);
+      await completeOpenTask(id, "send_followup");
+      await run("UPDATE prospects SET status = 'reply_sent', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await addEvent(id, "reply_sent", "Reply sent to prospect.", today);
     } else if (intent === "archiveProspect") {
-      db.prepare("UPDATE prospects SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      completeAllOpenTasks(id);
-      addEvent(id, "archived", "Prospect manually archived.", today);
+      await run("UPDATE prospects SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await completeAllOpenTasks(id);
+      await addEvent(id, "archived", "Prospect manually archived.", today);
     } else if (intent === "reopenConversation") {
-      db.prepare("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      addEvent(id, "conversation_reopened", "Conversation reopened.", today);
+      await run("UPDATE prospects SET status = 'conversation_active', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await addEvent(id, "conversation_reopened", "Conversation reopened.", today);
     } else if (intent === "updateMessage") {
       const type = String(formData.get("messageType") || "").trim();
       const content = String(formData.get("messageContent") || "").trim();
       if (!["connection", "report", "report_no_note", "followup"].includes(type)) throw new Error("Unknown message type");
       if (!content) throw new Error("Message content is required");
-      upsertGeneratedMessage(id, type, content, type === "followup" ? null : null);
-      addEvent(id, "message_updated", `${type} message edited.`, today);
+      await upsertGeneratedMessage(id, type, content, type === "followup" ? null : null);
+      await addEvent(id, "message_updated", `${type} message edited.`, today);
     } else if (intent === "markAccepted") {
-      db.prepare("UPDATE prospects SET status = 'accepted', accepted_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
-      completeOpenTask(id, "watch_acceptance");
-      createOpenTask(id, "send_report", `Send first message to ${prospect.name}`, today);
-      addEvent(id, "accepted", "LinkedIn connection accepted.", today);
+      await run("UPDATE prospects SET status = 'accepted', accepted_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+      await completeOpenTask(id, "watch_acceptance");
+      await createOpenTask(id, "send_report", `Send first message to ${prospect.name}`, today);
+      await addEvent(id, "accepted", "LinkedIn connection accepted.", today);
     } else if (intent === "archiveDeclined") {
-      db.prepare("UPDATE prospects SET status = 'archived_declined', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      completeAllOpenTasks(id);
-      addEvent(id, "archived_declined", "Connection request declined or ignored. Archived to avoid recontacting.", today);
+      await run("UPDATE prospects SET status = 'archived_declined', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await completeAllOpenTasks(id);
+      await addEvent(id, "archived_declined", "Connection request declined or ignored. Archived to avoid recontacting.", today);
     } else if (intent === "markConnectionSent" || intent === "markConnectionSentWithNote") {
-      db.prepare(`
+      await run(`
         UPDATE prospects
         SET status = 'connection_sent',
             outreach_mode = 'with_note',
@@ -329,13 +383,13 @@ export async function runProspectAction(formData: FormData) {
             connection_sent_date = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(today, id);
-      db.prepare("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'connection'").run(today, id);
-      completeOpenTask(id, "send_connection");
-      createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
-      addEvent(id, "connection_sent", "Connection request sent with custom note.", today);
+      `, [today, id]);
+      await run("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'connection'", [today, id]);
+      await completeOpenTask(id, "send_connection");
+      await createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
+      await addEvent(id, "connection_sent", "Connection request sent with custom note.", today);
     } else if (intent === "markConnectionSentWithoutNote") {
-      db.prepare(`
+      await run(`
         UPDATE prospects
         SET status = 'connection_sent',
             outreach_mode = 'no_note',
@@ -343,60 +397,58 @@ export async function runProspectAction(formData: FormData) {
             connection_sent_date = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(today, id);
-      completeOpenTask(id, "send_connection");
-      createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
-      addEvent(id, "connection_sent_without_note", "Connection request sent without custom note. First outreach message waits for acceptance.", today);
+      `, [today, id]);
+      await completeOpenTask(id, "send_connection");
+      await createOpenTask(id, "watch_acceptance", `Watch LinkedIn acceptance for ${prospect.name}`, null);
+      await addEvent(id, "connection_sent_without_note", "Connection request sent without custom note. First outreach message waits for acceptance.", today);
     } else if (intent === "addBriefUrl") {
       const sharedUrl = String(formData.get("sharedUrl") || "").trim();
       if (!sharedUrl) throw new Error("Brief URL is required");
-      db.prepare("UPDATE briefs SET shared_url = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ?").run(sharedUrl, id);
-      addEvent(id, "brief_url_added", `Brief URL added: ${sharedUrl}`, today);
+      await run("UPDATE briefs SET shared_url = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ?", [sharedUrl, id]);
+      await addEvent(id, "brief_url_added", `Brief URL added: ${sharedUrl}`, today);
     } else if (intent === "updateBriefStrategy") {
       const topic = trimWords(String(formData.get("briefTopic") || ""), 3);
       const preparationNotes = String(formData.get("briefPreparation") || "").trim();
       if (!topic) throw new Error("Brief topic is required");
-      db.prepare(`
+      await run(`
         INSERT INTO briefs (prospect_id, topic, preparation_notes)
         VALUES (?, ?, ?)
         ON CONFLICT(prospect_id) DO UPDATE SET
           topic = excluded.topic,
           preparation_notes = excluded.preparation_notes,
           updated_at = CURRENT_TIMESTAMP
-      `).run(id, topic, preparationNotes);
-      upsertGeneratedMessage(id, "report_no_note", noNoteReportFallback(prospect.name, topic, prospect.position, prospect.about, prospect.recommended_template), null);
-      addEvent(id, "brief_strategy_updated", `Brief topic updated to ${topic}.`, today);
+      `, [id, topic, preparationNotes]);
+      await upsertGeneratedMessage(id, "report_no_note", noNoteReportFallback(prospect.name, topic, prospect.position, prospect.about, prospect.recommended_template), null);
+      await addEvent(id, "brief_strategy_updated", `Brief topic updated to ${topic}.`, today);
     } else if (intent === "markReportSent") {
-      const followupDate = addDaysIso(today, 5);
-      db.prepare("UPDATE prospects SET status = 'report_sent', report_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
-      db.prepare("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'report'").run(today, id);
-      db.prepare("UPDATE messages SET due_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'followup'").run(followupDate, id);
-      completeOpenTask(id, "send_report");
-      createOpenTask(id, "send_followup", `Follow up with ${prospect.name}`, followupDate);
-      addEvent(id, "report_sent", `Report sent. Follow-up due on ${followupDate}.`, today);
+      const followupDate = addDaysIso(today, 2);
+      await run("UPDATE prospects SET status = 'report_sent', report_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+      await run("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'report'", [today, id]);
+      await run("UPDATE messages SET due_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'followup'", [followupDate, id]);
+      await completeOpenTask(id, "send_report");
+      await createOpenTask(id, "send_followup", `Follow up with ${prospect.name}`, followupDate);
+      await addEvent(id, "report_sent", `Report sent. Follow-up due on ${followupDate}.`, today);
     } else if (intent === "markFollowupSent") {
-      db.prepare("UPDATE prospects SET status = 'followup_sent', followup_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(today, id);
-      db.prepare("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'followup'").run(today, id);
-      completeOpenTask(id, "send_followup");
-      addEvent(id, "followup_sent", "Follow-up sent.", today);
+      await run("UPDATE prospects SET status = 'followup_sent', followup_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
+      await run("UPDATE messages SET sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE prospect_id = ? AND type = 'followup'", [today, id]);
+      await completeOpenTask(id, "send_followup");
+      await addEvent(id, "followup_sent", "Follow-up sent.", today);
     } else if (intent === "skip") {
-      db.prepare("UPDATE prospects SET status = 'skipped', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      completeAllOpenTasks(id);
-      addEvent(id, "skipped", "Prospect skipped.", today);
+      await run("UPDATE prospects SET status = 'skipped', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await completeAllOpenTasks(id);
+      await addEvent(id, "skipped", "Prospect skipped.", today);
     } else if (intent === "saveForLater") {
-      db.prepare("UPDATE prospects SET status = 'saved_for_later', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      completeAllOpenTasks(id);
-      addEvent(id, "saved_for_later", "Prospect saved for a later wave.", today);
+      await run("UPDATE prospects SET status = 'saved_for_later', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await completeAllOpenTasks(id);
+      await addEvent(id, "saved_for_later", "Prospect saved for a later wave.", today);
     } else if (intent === "switchToWithNoteMode") {
-      db.prepare("UPDATE prospects SET outreach_mode = 'with_note', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-      addEvent(id, "with_note_mode_selected", "With-note outreach mode selected.", today);
+      await run("UPDATE prospects SET outreach_mode = 'with_note', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+      await addEvent(id, "with_note_mode_selected", "With-note outreach mode selected.", today);
     } else {
       throw new Error(`Unknown action ${intent}`);
     }
 
-    db.exec("COMMIT");
   } catch (error) {
-    db.exec("ROLLBACK");
     throw error;
   }
 }
@@ -413,56 +465,36 @@ function replyFallback(name: string, inboundContent: string) {
   return `Thanks ${first}, really appreciate the reply.\n\nWhat would make this more useful for the kind of policy or communications work you do?`;
 }
 
-export function importAnalyzedProspects(items: AnalyzedProspect[]) {
-  const db = getDb();
+export async function importAnalyzedProspects(items: AnalyzedProspect[]) {
   const today = todayIso();
-  const upsertProspect = db.prepare(`
-    INSERT INTO prospects (
-      name, position, profile_url, about, priority_tag, wave, contact_now,
-      rationale, recommended_template, notes, status
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(profile_url) DO UPDATE SET
-      name = excluded.name,
-      position = excluded.position,
-      about = excluded.about,
-      priority_tag = excluded.priority_tag,
-      wave = excluded.wave,
-      contact_now = excluded.contact_now,
-      rationale = excluded.rationale,
-      recommended_template = excluded.recommended_template,
-      notes = excluded.notes,
-      status = CASE
-        WHEN prospects.status IN ('connection_sent', 'accepted', 'report_sent', 'followup_sent') THEN prospects.status
-        ELSE excluded.status
-      END,
-      updated_at = CURRENT_TIMESTAMP
-  `);
-  const getProspect = db.prepare("SELECT id, status FROM prospects WHERE profile_url = ?");
-  const upsertBrief = db.prepare(`
-    INSERT INTO briefs (prospect_id, topic, preparation_notes)
-    VALUES (?, ?, ?)
-    ON CONFLICT(prospect_id) DO UPDATE SET
-      topic = excluded.topic,
-      preparation_notes = excluded.preparation_notes,
-      updated_at = CURRENT_TIMESTAMP
-  `);
-  const upsertMessage = db.prepare(`
-    INSERT INTO messages (prospect_id, type, content, due_date, sent_date)
-    VALUES (?, ?, ?, ?, NULL)
-    ON CONFLICT(prospect_id, type) DO UPDATE SET
-      content = excluded.content,
-      due_date = excluded.due_date,
-      updated_at = CURRENT_TIMESTAMP
-  `);
 
-  db.exec("BEGIN");
   try {
     for (const raw of items) {
       const item = normalizeAnalyzedProspect(raw);
       if (!item.name || !item.profileUrl) continue;
       const status = statusForImportedProspect(item);
-      upsertProspect.run(
+      await run(`
+        INSERT INTO prospects (
+          name, position, profile_url, about, priority_tag, wave, contact_now,
+          rationale, recommended_template, notes, status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(profile_url) DO UPDATE SET
+          name = excluded.name,
+          position = excluded.position,
+          about = excluded.about,
+          priority_tag = excluded.priority_tag,
+          wave = excluded.wave,
+          contact_now = excluded.contact_now,
+          rationale = excluded.rationale,
+          recommended_template = excluded.recommended_template,
+          notes = excluded.notes,
+          status = CASE
+            WHEN prospects.status IN ('connection_sent', 'accepted', 'report_sent', 'followup_sent', 'conversation_active', 'reply_sent', 'archived') THEN prospects.status
+            ELSE excluded.status
+          END,
+          updated_at = CURRENT_TIMESTAMP
+      `, [
         item.name,
         item.position,
         item.profileUrl,
@@ -474,32 +506,38 @@ export function importAnalyzedProspects(items: AnalyzedProspect[]) {
         item.recommendedTemplate,
         "",
         status,
-      );
-      const prospect = getProspect.get(item.profileUrl) as { id: number; status: string };
+      ]);
+      const prospect = await one<{ id: number; status: string }>("SELECT id, status FROM prospects WHERE profile_url = ?", [item.profileUrl]);
+      if (!prospect) continue;
 
       if (item.briefTopic) {
-        upsertBrief.run(prospect.id, item.briefTopic, item.briefPreparation);
+        await run(`
+          INSERT INTO briefs (prospect_id, topic, preparation_notes)
+          VALUES (?, ?, ?)
+          ON CONFLICT(prospect_id) DO UPDATE SET
+            topic = excluded.topic,
+            preparation_notes = excluded.preparation_notes,
+            updated_at = CURRENT_TIMESTAMP
+        `, [prospect.id, item.briefTopic, item.briefPreparation]);
       }
       if (item.connectionMessage) {
-        upsertMessage.run(prospect.id, "connection", item.connectionMessage, null);
+        await upsertGeneratedMessage(prospect.id, "connection", item.connectionMessage, null);
       }
       if (item.reportMessage) {
-        upsertMessage.run(prospect.id, "report", item.reportMessage, null);
+        await upsertGeneratedMessage(prospect.id, "report", item.reportMessage, null);
       }
       if (item.noNoteReportMessage) {
-        upsertMessage.run(prospect.id, "report_no_note", item.noNoteReportMessage, null);
+        await upsertGeneratedMessage(prospect.id, "report_no_note", item.noNoteReportMessage, null);
       }
       if (item.followupMessage) {
-        upsertMessage.run(prospect.id, "followup", item.followupMessage, null);
+        await upsertGeneratedMessage(prospect.id, "followup", item.followupMessage, null);
       }
       if (item.contactNow && status === "to_contact") {
-        createOpenTask(prospect.id, "send_connection", `Send connection request to ${item.name}`, today);
+        await createOpenTask(prospect.id, "send_connection", `Send connection request to ${item.name}`, today);
       }
-      addEvent(prospect.id, "batch_imported", `Analyzed as ${item.priorityTag}${item.wave ? ` wave ${item.wave}` : ""}.`, today);
+      await addEvent(prospect.id, "batch_imported", `Analyzed as ${item.priorityTag}${item.wave ? ` wave ${item.wave}` : ""}.`, today);
     }
-    db.exec("COMMIT");
   } catch (error) {
-    db.exec("ROLLBACK");
     throw error;
   }
 }
@@ -508,78 +546,99 @@ function normalizeLinkedInUrl(value: string) {
   return value.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
 }
 
-function getDb() {
+async function getDb() {
   if (!database) {
+    loadLocalEnv();
     fs.mkdirSync(dataDir, { recursive: true });
-    database = new DatabaseSync(dbPath);
-    database.exec("PRAGMA foreign_keys = ON");
-    applyMigrations(database);
+    const url = process.env.DATABASE_URL || `file:${dbPath}`;
+    database = createClient({
+      url,
+      authToken: process.env.DATABASE_AUTH_TOKEN,
+    });
+    databaseReady = applyMigrations(database);
   }
+  await databaseReady;
   return database;
 }
 
-function applyMigrations(db: DatabaseSync) {
-  db.exec(`
+async function applyMigrations(db: Client) {
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version TEXT PRIMARY KEY,
       applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as { version: string }[]).map((row) => row.version));
+  const appliedRows = await db.execute("SELECT version FROM schema_migrations");
+  const applied = new Set((appliedRows.rows as unknown as { version: string }[]).map((row) => row.version));
   const files = fs.readdirSync(migrationsDir).filter((file) => file.endsWith(".sql")).sort();
 
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
-    db.exec("BEGIN");
+    await db.execute("BEGIN");
     try {
-      db.exec(sql);
-      db.prepare("INSERT INTO schema_migrations (version) VALUES (?)").run(file);
-      db.exec("COMMIT");
+      await db.executeMultiple(sql);
+      await db.execute({ sql: "INSERT INTO schema_migrations (version) VALUES (?)", args: [file] });
+      await db.execute("COMMIT");
     } catch (error) {
-      db.exec("ROLLBACK");
+      await db.execute("ROLLBACK");
       throw error;
     }
   }
 }
 
-function createOpenTask(prospectId: number, type: string, title: string, dueDate: string | null) {
-  const db = getDb();
-  const existing = db.prepare("SELECT id FROM tasks WHERE prospect_id = ? AND type = ? AND status = 'open'").get(prospectId, type);
+async function createOpenTask(prospectId: number, type: string, title: string, dueDate: string | null) {
+  const existing = await one<{ id: number }>("SELECT id FROM tasks WHERE prospect_id = ? AND type = ? AND status = 'open'", [prospectId, type]);
   if (!existing) {
-    db.prepare("INSERT INTO tasks (prospect_id, type, title, due_date) VALUES (?, ?, ?, ?)").run(prospectId, type, title, dueDate);
+    await run("INSERT INTO tasks (prospect_id, type, title, due_date) VALUES (?, ?, ?, ?)", [prospectId, type, title, dueDate]);
   }
 }
 
-function completeOpenTask(prospectId: number, type: string) {
-  getDb().prepare(`
+async function completeOpenTask(prospectId: number, type: string) {
+  await run(`
     UPDATE tasks
     SET status = 'done', completed_at = ?, updated_at = CURRENT_TIMESTAMP
     WHERE prospect_id = ? AND type = ? AND status = 'open'
-  `).run(todayIso(), prospectId, type);
+  `, [todayIso(), prospectId, type]);
 }
 
-function completeAllOpenTasks(prospectId: number) {
-  getDb().prepare(`
+async function completeAllOpenTasks(prospectId: number) {
+  await run(`
     UPDATE tasks
     SET status = 'done', completed_at = ?, updated_at = CURRENT_TIMESTAMP
     WHERE prospect_id = ? AND status = 'open'
-  `).run(todayIso(), prospectId);
+  `, [todayIso(), prospectId]);
 }
 
-function upsertGeneratedMessage(prospectId: number, type: string, content: string, dueDate: string | null) {
-  getDb().prepare(`
+async function upsertGeneratedMessage(prospectId: number, type: string, content: string, dueDate: string | null) {
+  await run(`
     INSERT INTO messages (prospect_id, type, content, due_date, sent_date)
     VALUES (?, ?, ?, ?, NULL)
     ON CONFLICT(prospect_id, type) DO UPDATE SET
       content = excluded.content,
       due_date = excluded.due_date,
       updated_at = CURRENT_TIMESTAMP
-  `).run(prospectId, type, content, dueDate);
+  `, [prospectId, type, content, dueDate]);
 }
 
-function addEvent(prospectId: number, type: string, note: string, happenedAt: string) {
-  getDb().prepare("INSERT INTO events (prospect_id, type, note, happened_at) VALUES (?, ?, ?, ?)").run(prospectId, type, note, happenedAt);
+async function addEvent(prospectId: number, type: string, note: string, happenedAt: string) {
+  await run("INSERT INTO events (prospect_id, type, note, happened_at) VALUES (?, ?, ?, ?)", [prospectId, type, note, happenedAt]);
+}
+
+async function one<T>(sql: string, args: InValue[] = []) {
+  const rows = await all<T>(sql, args);
+  return rows[0] as T | undefined;
+}
+
+async function all<T>(sql: string, args: InValue[] = []) {
+  const db = await getDb();
+  const result = await db.execute({ sql, args });
+  return result.rows as unknown as T[];
+}
+
+async function run(sql: string, args: InValue[] = []) {
+  const db = await getDb();
+  await db.execute({ sql, args });
 }
 
 function todayIso() {
@@ -665,7 +724,7 @@ function prospectContext(position?: string | null, about?: string | null, templa
 
 async function generateNoNoteRewrite(prospectId: number): Promise<NoNoteRewrite> {
   loadLocalEnv();
-  const detail = getProspectDetail(prospectId);
+  const detail = await getProspectDetail(prospectId);
   if (!detail) throw new Error("Prospect not found");
 
   const { prospect } = detail;
@@ -726,6 +785,10 @@ TASK
 - The first message must naturally acknowledge the new connection and introduce the brief.
 - Make the first message feel written for this exact person, not a reusable template.
 - Use the prospect's role, organization context, about section, rationale, recommendedTemplate and briefTopic to choose one concrete angle.
+- Treat activity evidence carefully: reposts, likes, comments, and visible activity prove interest only, not professional ownership.
+- Do not say "your work on [topic]" unless role/about/experience explicitly says the prospect works on that topic.
+- If the topic comes from a repost or recent activity, say "your recent interest in [topic]", "a topic you recently shared", or "given the policy issues visible in your activity".
+- In the message, distinguish professional role fit from activity signal. Never turn a repost into "your professional domain".
 - Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format. Do not make this a product pitch.
 - Explain why this brief is relevant to their world in one specific phrase.
 - Ask for feedback on the angle, signal quality, or format. Do not ask for "thoughts" generically.
@@ -733,7 +796,7 @@ TASK
 - It must be 5 lines max.
 - It must not say "as promised", "the brief I mentioned", "as I mentioned", or imply that a note was sent.
 - Avoid generic filler: "key topics", "professionals like yourself", "might be of interest", "any initial thoughts", "greatly appreciated".
-- Rewrite the follow-up for 5 days later. It should still be gentle and should not refer to a promised brief.
+- Rewrite the follow-up for 2 days later. It should still be gentle and should not refer to a promised brief.
 
 OUTPUT JSON SHAPE
 {

@@ -34,22 +34,22 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ ok: false, error: "Open a LinkedIn profile page first." }, { status: 400, headers: corsHeaders() });
   }
 
-  const existingId = findProspectByProfileUrl(profileUrl);
+  const existingId = await findProspectByProfileUrl(profileUrl);
   if (existingId) {
-    setProspectOutreachPreference(existingId, normalizeOutreachMode(payload.outreachMode));
+    await setProspectOutreachPreference(existingId, normalizeOutreachMode(payload.outreachMode));
     return respond(payload, existingId, true);
   }
 
   const table = prospectEvidenceToTable({ ...payload, profileUrl });
   const analysis = await analyzeProspectTable(table);
-  importAnalyzedProspects(analysis.prospects);
-  const id = findProspectByProfileUrl(profileUrl);
+  await importAnalyzedProspects(analysis.prospects);
+  const id = await findProspectByProfileUrl(profileUrl);
 
   if (!id) {
     return data({ ok: false, error: "Profile analyzed but not found after import." }, { status: 500, headers: corsHeaders() });
   }
 
-  setProspectOutreachPreference(id, normalizeOutreachMode(payload.outreachMode));
+  await setProspectOutreachPreference(id, normalizeOutreachMode(payload.outreachMode));
   return respond(payload, id, false);
 }
 

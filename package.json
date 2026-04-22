@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "init": "node scripts/init.js",
-    "dev": "react-router dev --port 4377",
+    "push:turso": "node scripts/push-turso.js",
+    "dev": "react-router dev --host 127.0.0.1 --port 4377 --strictPort",
     "build": "react-router build",
     "start": "react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc",
@@ -14,6 +15,7 @@
     "node": ">=22.13.0"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.2",
     "@react-router/node": "^7.14.1",
     "@react-router/serve": "^7.14.1",
     "isbot": "^5.1.32",
