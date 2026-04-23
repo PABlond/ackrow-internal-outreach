@@ -414,18 +414,24 @@ async function setProspectOutreachPreference(id, mode) {
   await addEvent(id, mode === "no_note" ? "no_note_mode_selected" : "with_note_mode_selected", `Extension selected ${mode === "no_note" ? "no-note" : "with-note"} outreach mode.`, today);
 }
 async function getExtensionDashboard() {
+  const pendingCheckDelayHours = 4;
   const pendingConnections = await all(`
     SELECT id, name, position, profile_url, outreach_mode, connection_sent_date, pending_checked_at, connection_last_state
     FROM prospects
     WHERE status = 'connection_sent'
+      AND (
+        pending_checked_at IS NULL
+        OR pending_checked_at <= datetime('now', ?)
+      )
     ORDER BY
       CASE WHEN pending_checked_at IS NULL THEN 0 ELSE 1 END,
       pending_checked_at,
       COALESCE(connection_sent_date, '9999-12-31'),
       name
-  `);
+  `, [`-${pendingCheckDelayHours} hours`]);
   return {
     today: todayIso(),
+    pendingCheckDelayHours,
     pendingConnections
   };
 }
@@ -558,11 +564,13 @@ async function getDashboard() {
     ORDER BY e.happened_at DESC, e.id DESC
     LIMIT 100
   `);
+  const stats = await getDashboardStats(today);
   return {
     today,
     prospects,
     tasks,
     events,
+    stats,
     sections: {
       toConnect: tasks.filter((item) => item.status === "open" && item.type === "send_connection"),
       twitterToContact: tasks.filter((item) => item.status === "open" && item.type === "send_twitter_dm"),
@@ -580,6 +588,55 @@ async function getDashboard() {
       pendingConnections: prospects.filter((item) => item.status === "connection_sent"),
       doneToday: events.filter((item) => String(item.happened_at).slice(0, 10) === today)
     }
+  };
+}
+async function getDashboardStats(today) {
+  const days = Array.from({ length: 7 }, (_, index) => addDaysIso(today, index - 6));
+  const firstDay = days[0];
+  const sentEventTypes = [
+    "report_sent",
+    "followup_sent",
+    "reply_sent",
+    "twitter_dm_sent",
+    "twitter_followup_sent"
+  ];
+  const sentRows = await all(`
+    SELECT date(happened_at) AS date, COUNT(*) AS count
+    FROM events
+    WHERE type IN (${sentEventTypes.map(() => "?").join(", ")})
+      AND date(happened_at) >= ?
+      AND date(happened_at) <= ?
+    GROUP BY date(happened_at)
+  `, [...sentEventTypes, firstDay, today]);
+  const createdBefore = await one(`
+    SELECT COUNT(*) AS count
+    FROM prospects
+    WHERE date(created_at) < ?
+  `, [firstDay]);
+  const createdRows = await all(`
+    SELECT date(created_at) AS date, COUNT(*) AS count
+    FROM prospects
+    WHERE date(created_at) >= ?
+      AND date(created_at) <= ?
+    GROUP BY date(created_at)
+  `, [firstDay, today]);
+  const sentByDay = new Map(sentRows.map((row) => [row.date, Number(row.count)]));
+  const createdByDay = new Map(createdRows.map((row) => [row.date, Number(row.count)]));
+  let cumulativeProspects = Number(createdBefore?.count || 0);
+  return {
+    messagesSent7d: days.map((date) => ({
+      date,
+      label: shortDayLabel(date),
+      value: sentByDay.get(date) || 0
+    })),
+    prospects7d: days.map((date) => {
+      cumulativeProspects += createdByDay.get(date) || 0;
+      return {
+        date,
+        label: shortDayLabel(date),
+        value: cumulativeProspects
+      };
+    })
   };
 }
 async function runProspectAction(formData) {
@@ -715,6 +772,10 @@ async function runProspectAction(formData) {
       `, [id, topic, preparationNotes]);
       await upsertGeneratedMessage(id, "report_no_note", noNoteReportFallback(prospect.name, topic, prospect.position, prospect.about, prospect.recommended_template), null);
       await addEvent(id, "brief_strategy_updated", `Brief topic updated to ${topic}.`, today);
+    } else if (intent === "updateProspectNotes") {
+      const notes = String(formData.get("notes") || "").trim();
+      await run("UPDATE prospects SET notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [notes, id]);
+      await addEvent(id, "notes_updated", notes ? "Internal note updated." : "Internal note cleared.", today);
     } else if (intent === "markReportSent") {
       const followupDate = addDaysIso(today, 2);
       await run("UPDATE prospects SET status = 'report_sent', report_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
@@ -961,6 +1022,9 @@ function addDaysIso(dateIso, days) {
   const date = /* @__PURE__ */ new Date(`${dateIso}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+function shortDayLabel(dateIso) {
+  return dateIso.slice(5).replace("-", "/");
 }
 function withDerivedMessages(prospect) {
   const noNoteFallback = noNoteReportFallback(
@@ -1287,6 +1351,17 @@ const home = UNSAFE_withComponentProps(function Home() {
           label: "Active conversations",
           value: data2.sections.conversationsActive.length
         })]
+      }), /* @__PURE__ */ jsxs("section", {
+        className: "mt-6 grid gap-4 lg:grid-cols-2",
+        children: [/* @__PURE__ */ jsx(StatsCard, {
+          title: "Messages sent",
+          detail: "Last 7 days, across LinkedIn and Twitter/X.",
+          points: data2.stats.messagesSent7d
+        }), /* @__PURE__ */ jsx(StatsCard, {
+          title: "Prospect base",
+          detail: "Total prospects in CRM over the last 7 days.",
+          points: data2.stats.prospects7d
+        })]
       }), /* @__PURE__ */ jsxs("div", {
         className: "mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]",
         children: [/* @__PURE__ */ jsxs("div", {
@@ -1532,7 +1607,7 @@ function buildTodoItems(data2) {
   for (const prospect of data2.sections.pendingConnections) {
     const watchTask = watchAcceptanceTasksByProspectId.get(prospect.id);
     const pendingAge = pendingTodoAgeMs(prospect, watchTask);
-    if (pendingAge !== null && pendingAge < 2 * 60 * 60 * 1e3) continue;
+    if (pendingAge !== null && pendingAge < 4 * 60 * 60 * 1e3) continue;
     todos.push({
       key: `pending-check-${prospect.id}`,
       priority: prospect.pending_checked_at ? 60 : 50,
@@ -1684,7 +1759,7 @@ function followupCopy(prospect, task) {
 function pendingTodoAgeMs(prospect, watchTask) {
   if (prospect.pending_checked_at) return dateAgeMs(prospect.pending_checked_at);
   if (watchTask?.created_at) return dateAgeMs(watchTask.created_at);
-  if (prospect.connection_sent_date && prospect.connection_sent_date < todayIsoClient()) return 2 * 60 * 60 * 1e3;
+  if (prospect.connection_sent_date && prospect.connection_sent_date < todayIsoClient()) return 4 * 60 * 60 * 1e3;
   if (prospect.connection_sent_date) return 0;
   return null;
 }
@@ -1798,6 +1873,59 @@ function Metric$2({
     }), /* @__PURE__ */ jsx("p", {
       className: "mt-1 text-3xl font-semibold",
       children: value
+    })]
+  });
+}
+function StatsCard({
+  title,
+  detail,
+  points
+}) {
+  const max = Math.max(1, ...points.map((point) => point.value));
+  const total = points.reduce((sum, point) => sum + point.value, 0);
+  const latest = points.at(-1)?.value || 0;
+  return /* @__PURE__ */ jsxs("div", {
+    className: "rounded-lg border border-stone-300 bg-white p-5",
+    children: [/* @__PURE__ */ jsxs("div", {
+      className: "flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between",
+      children: [/* @__PURE__ */ jsxs("div", {
+        children: [/* @__PURE__ */ jsx("h2", {
+          className: "text-lg font-semibold",
+          children: title
+        }), /* @__PURE__ */ jsx("p", {
+          className: "mt-1 text-sm text-stone-600",
+          children: detail
+        })]
+      }), /* @__PURE__ */ jsxs("div", {
+        className: "text-left sm:text-right",
+        children: [/* @__PURE__ */ jsx("p", {
+          className: "text-2xl font-semibold",
+          children: latest
+        }), /* @__PURE__ */ jsx("p", {
+          className: "text-xs font-medium uppercase text-stone-500",
+          children: title === "Messages sent" ? `${total} total` : "today"
+        })]
+      })]
+    }), /* @__PURE__ */ jsx("div", {
+      className: "mt-5 grid h-40 grid-cols-7 items-end gap-2 border-b border-stone-300 pb-2",
+      children: points.map((point) => /* @__PURE__ */ jsxs("div", {
+        className: "flex h-full flex-col justify-end gap-2",
+        children: [/* @__PURE__ */ jsx("div", {
+          className: "flex min-h-6 items-center justify-center text-xs font-semibold text-stone-600",
+          children: point.value
+        }), /* @__PURE__ */ jsx("div", {
+          className: "min-h-2 rounded-t-md bg-teal-700",
+          style: {
+            height: point.value === 0 ? "0px" : `${Math.max(8, Math.round(point.value / max * 104))}px`
+          },
+          title: `${point.date}: ${point.value}`
+        })]
+      }, point.date))
+    }), /* @__PURE__ */ jsx("div", {
+      className: "mt-2 grid grid-cols-7 gap-2 text-center text-xs text-stone-500",
+      children: points.map((point) => /* @__PURE__ */ jsx("span", {
+        children: point.label
+      }, point.date))
     })]
   });
 }
@@ -4362,6 +4490,45 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
               prospect,
               replies
             })]
+          }), /* @__PURE__ */ jsx(CollapsibleSection, {
+            title: "Internal note",
+            detail: "Small private CRM note.",
+            defaultOpen: Boolean(prospect.notes),
+            children: /* @__PURE__ */ jsxs(Form, {
+              method: "post",
+              className: "mt-4 border-t border-stone-200 pt-3",
+              children: [/* @__PURE__ */ jsx("input", {
+                type: "hidden",
+                name: "intent",
+                value: "updateProspectNotes"
+              }), /* @__PURE__ */ jsx("input", {
+                type: "hidden",
+                name: "prospectId",
+                value: prospect.id
+              }), prospect.notes ? /* @__PURE__ */ jsx("div", {
+                className: "mb-3 rounded-md border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700",
+                children: /* @__PURE__ */ jsx("p", {
+                  className: "whitespace-pre-wrap",
+                  children: prospect.notes
+                })
+              }) : null, /* @__PURE__ */ jsx("label", {
+                className: "text-sm font-semibold",
+                htmlFor: "notes",
+                children: "Note"
+              }), /* @__PURE__ */ jsx("textarea", {
+                id: "notes",
+                name: "notes",
+                defaultValue: prospect.notes || "",
+                rows: 3,
+                placeholder: "Tiny internal note, context, next angle...",
+                className: "mt-2 min-h-24 w-full resize-y rounded-md border border-stone-300 bg-stone-50 px-3 py-2 text-sm outline-none focus:border-teal-700"
+              }), /* @__PURE__ */ jsxs("button", {
+                className: "mt-3 inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium hover:border-teal-700",
+                children: [/* @__PURE__ */ jsx(Save, {
+                  size: 14
+                }), "Save note"]
+              })]
+            })
           }), /* @__PURE__ */ jsxs("section", {
             className: "rounded-lg border border-stone-300 bg-white p-5",
             children: [/* @__PURE__ */ jsx(SectionTitle, {
@@ -4996,7 +5163,7 @@ const route9 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   loader,
   meta
 }, Symbol.toStringTag, { value: "Module" }));
-const serverManifest = { "entry": { "module": "/assets/entry.client-Mh2gPbg1.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-DOnnsevx.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": ["/assets/root-BITnZrfi.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-Dy_MxVXv.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/search-D8C4gO1s.js", "/assets/createLucideIcon-DE2VjKt3.js", "/assets/user-check-ClwYYjaz.js", "/assets/plus-B3ZS8NII.js", "/assets/send-BWLy2b3j.js", "/assets/external-link-CoUt5864.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/batch": { "id": "routes/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-Dsp8k5oY.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/plus-B3ZS8NII.js", "/assets/trash-2-BA1jMblW.js", "/assets/send-BWLy2b3j.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/twitter": { "id": "routes/twitter", "parentId": "root", "path": "twitter", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/twitter-DK_ye6Ff.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/plus-B3ZS8NII.js", "/assets/trash-2-BA1jMblW.js", "/assets/send-BWLy2b3j.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-zkgif3XM.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/createLucideIcon-DE2VjKt3.js", "/assets/search-D8C4gO1s.js", "/assets/external-link-CoUt5864.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/search": { "id": "routes/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-DSkMWtVc.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/search-D8C4gO1s.js", "/assets/external-link-CoUt5864.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.dashboard": { "id": "routes/api.extension.dashboard", "parentId": "root", "path": "api/extension/dashboard", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.dashboard-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.connection-status": { "id": "routes/api.extension.connection-status", "parentId": "root", "path": "api/extension/connection-status", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.connection-status-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.prospect": { "id": "routes/api.extension.prospect", "parentId": "root", "path": "api/extension/prospect", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.prospect-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "root", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-0OOLdWto.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/external-link-CoUt5864.js", "/assets/createLucideIcon-DE2VjKt3.js", "/assets/send-BWLy2b3j.js", "/assets/user-check-ClwYYjaz.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-77024f51.js", "version": "77024f51", "sri": void 0 };
+const serverManifest = { "entry": { "module": "/assets/entry.client-Mh2gPbg1.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-ChxmhaQW.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": ["/assets/root-D-ZheLr8.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-Cl6tDvw9.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/search-D8C4gO1s.js", "/assets/createLucideIcon-DE2VjKt3.js", "/assets/user-check-ClwYYjaz.js", "/assets/plus-B3ZS8NII.js", "/assets/send-BWLy2b3j.js", "/assets/external-link-CoUt5864.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/batch": { "id": "routes/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-Dsp8k5oY.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/plus-B3ZS8NII.js", "/assets/trash-2-BA1jMblW.js", "/assets/send-BWLy2b3j.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/twitter": { "id": "routes/twitter", "parentId": "root", "path": "twitter", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/twitter-DK_ye6Ff.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/plus-B3ZS8NII.js", "/assets/trash-2-BA1jMblW.js", "/assets/send-BWLy2b3j.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-zkgif3XM.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/createLucideIcon-DE2VjKt3.js", "/assets/search-D8C4gO1s.js", "/assets/external-link-CoUt5864.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/search": { "id": "routes/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-DSkMWtVc.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/search-D8C4gO1s.js", "/assets/external-link-CoUt5864.js", "/assets/createLucideIcon-DE2VjKt3.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.dashboard": { "id": "routes/api.extension.dashboard", "parentId": "root", "path": "api/extension/dashboard", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.dashboard-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.connection-status": { "id": "routes/api.extension.connection-status", "parentId": "root", "path": "api/extension/connection-status", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.connection-status-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.prospect": { "id": "routes/api.extension.prospect", "parentId": "root", "path": "api/extension/prospect", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.prospect-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "root", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-oSTi9XmJ.js", "imports": ["/assets/chunk-OE4NN4TA-DT7sb4le.js", "/assets/arrow-left-etJQR8_U.js", "/assets/external-link-CoUt5864.js", "/assets/createLucideIcon-DE2VjKt3.js", "/assets/send-BWLy2b3j.js", "/assets/user-check-ClwYYjaz.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-c8abc89b.js", "version": "c8abc89b", "sri": void 0 };
 const assetsBuildDirectory = "build/client";
 const basename = "/";
 const future = { "unstable_optimizeDeps": false, "unstable_passThroughRequests": false, "unstable_subResourceIntegrity": false, "unstable_trailingSlashAwareDataRequests": false, "unstable_previewServerPrerendering": false, "v8_middleware": true, "v8_splitRouteModules": false, "v8_viteEnvironmentApi": false };

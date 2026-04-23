@@ -3,7 +3,7 @@ import { Form, Link, redirect, useLoaderData } from "react-router";
 import { AtSign, CalendarCheck, Check, Clipboard, Clock, ExternalLink, LinkIcon, Plus, Save, Search, Send, SkipForward, UserPlus, UserCheck } from "lucide-react";
 
 import type { Route } from "./+types/home";
-import { getDashboard, runProspectAction, type Prospect, type Task } from "~/lib/outreach.server";
+import { getDashboard, runProspectAction, type DashboardStatsPoint, type Prospect, type Task } from "~/lib/outreach.server";
 
 export const meta: Route.MetaFunction = () => [
   { title: "Tempolis Outreach" },
@@ -77,6 +77,11 @@ export default function Home() {
           <Metric label="Pending connections" value={data.sections.pendingConnections.length} />
           <Metric label="Reports to send" value={data.sections.acceptedReport.length} />
           <Metric label="Active conversations" value={data.sections.conversationsActive.length} />
+        </section>
+
+        <section className="mt-6 grid gap-4 lg:grid-cols-2">
+          <StatsCard title="Messages sent" detail="Last 7 days, across LinkedIn and Twitter/X." points={data.stats.messagesSent7d} />
+          <StatsCard title="Prospect base" detail="Total prospects in CRM over the last 7 days." points={data.stats.prospects7d} />
         </section>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -275,7 +280,7 @@ function buildTodoItems(data: DashboardData): TodoItem[] {
   for (const prospect of data.sections.pendingConnections) {
     const watchTask = watchAcceptanceTasksByProspectId.get(prospect.id);
     const pendingAge = pendingTodoAgeMs(prospect, watchTask);
-    if (pendingAge !== null && pendingAge < 2 * 60 * 60 * 1000) continue;
+    if (pendingAge !== null && pendingAge < 4 * 60 * 60 * 1000) continue;
 
     todos.push({
       key: `pending-check-${prospect.id}`,
@@ -390,7 +395,7 @@ function followupCopy(prospect: Prospect, task?: Task) {
 function pendingTodoAgeMs(prospect: Prospect, watchTask?: Task) {
   if (prospect.pending_checked_at) return dateAgeMs(prospect.pending_checked_at);
   if (watchTask?.created_at) return dateAgeMs(watchTask.created_at);
-  if (prospect.connection_sent_date && prospect.connection_sent_date < todayIsoClient()) return 2 * 60 * 60 * 1000;
+  if (prospect.connection_sent_date && prospect.connection_sent_date < todayIsoClient()) return 4 * 60 * 60 * 1000;
   if (prospect.connection_sent_date) return 0;
   return null;
 }
@@ -475,6 +480,44 @@ function Metric({ label, value }: { label: string; value: number }) {
     <div className="rounded-lg border border-stone-300 bg-white p-5">
       <p className="text-sm text-stone-600">{label}</p>
       <p className="mt-1 text-3xl font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function StatsCard({ title, detail, points }: { title: string; detail: string; points: DashboardStatsPoint[] }) {
+  const max = Math.max(1, ...points.map((point) => point.value));
+  const total = points.reduce((sum, point) => sum + point.value, 0);
+  const latest = points.at(-1)?.value || 0;
+
+  return (
+    <div className="rounded-lg border border-stone-300 bg-white p-5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <p className="mt-1 text-sm text-stone-600">{detail}</p>
+        </div>
+        <div className="text-left sm:text-right">
+          <p className="text-2xl font-semibold">{latest}</p>
+          <p className="text-xs font-medium uppercase text-stone-500">{title === "Messages sent" ? `${total} total` : "today"}</p>
+        </div>
+      </div>
+      <div className="mt-5 grid h-40 grid-cols-7 items-end gap-2 border-b border-stone-300 pb-2">
+        {points.map((point) => (
+          <div key={point.date} className="flex h-full flex-col justify-end gap-2">
+            <div className="flex min-h-6 items-center justify-center text-xs font-semibold text-stone-600">{point.value}</div>
+            <div
+              className="min-h-2 rounded-t-md bg-teal-700"
+              style={{ height: point.value === 0 ? "0px" : `${Math.max(8, Math.round((point.value / max) * 104))}px` }}
+              title={`${point.date}: ${point.value}`}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 grid grid-cols-7 gap-2 text-center text-xs text-stone-500">
+        {points.map((point) => (
+          <span key={point.date}>{point.label}</span>
+        ))}
+      </div>
     </div>
   );
 }

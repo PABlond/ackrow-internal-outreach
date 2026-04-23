@@ -114,6 +114,12 @@ export type Reply = {
   updated_at: string;
 };
 
+export type DashboardStatsPoint = {
+  date: string;
+  label: string;
+  value: number;
+};
+
 export type ExtensionPendingConnection = {
   id: number;
   name: string;
@@ -137,19 +143,25 @@ export async function setProspectOutreachPreference(id: number, mode: "with_note
 }
 
 export async function getExtensionDashboard() {
+  const pendingCheckDelayHours = 4;
   const pendingConnections = await all<ExtensionPendingConnection>(`
     SELECT id, name, position, profile_url, outreach_mode, connection_sent_date, pending_checked_at, connection_last_state
     FROM prospects
     WHERE status = 'connection_sent'
+      AND (
+        pending_checked_at IS NULL
+        OR pending_checked_at <= datetime('now', ?)
+      )
     ORDER BY
       CASE WHEN pending_checked_at IS NULL THEN 0 ELSE 1 END,
       pending_checked_at,
       COALESCE(connection_sent_date, '9999-12-31'),
       name
-  `);
+  `, [`-${pendingCheckDelayHours} hours`]);
 
   return {
     today: todayIso(),
+    pendingCheckDelayHours,
     pendingConnections,
   };
 }
@@ -295,12 +307,14 @@ export async function getDashboard() {
     ORDER BY e.happened_at DESC, e.id DESC
     LIMIT 100
   `);
+  const stats = await getDashboardStats(today);
 
   return {
     today,
     prospects,
     tasks,
     events,
+    stats,
     sections: {
       toConnect: tasks.filter((item) => item.status === "open" && item.type === "send_connection"),
       twitterToContact: tasks.filter((item) => item.status === "open" && item.type === "send_twitter_dm"),
@@ -318,6 +332,61 @@ export async function getDashboard() {
       pendingConnections: prospects.filter((item) => item.status === "connection_sent"),
       doneToday: events.filter((item) => String(item.happened_at).slice(0, 10) === today),
     },
+  };
+}
+
+async function getDashboardStats(today: string) {
+  const days = Array.from({ length: 7 }, (_, index) => addDaysIso(today, index - 6));
+  const firstDay = days[0];
+  const sentEventTypes = [
+    "report_sent",
+    "followup_sent",
+    "reply_sent",
+    "twitter_dm_sent",
+    "twitter_followup_sent",
+  ];
+
+  const sentRows = await all<{ date: string; count: number }>(`
+    SELECT date(happened_at) AS date, COUNT(*) AS count
+    FROM events
+    WHERE type IN (${sentEventTypes.map(() => "?").join(", ")})
+      AND date(happened_at) >= ?
+      AND date(happened_at) <= ?
+    GROUP BY date(happened_at)
+  `, [...sentEventTypes, firstDay, today]);
+
+  const createdBefore = await one<{ count: number }>(`
+    SELECT COUNT(*) AS count
+    FROM prospects
+    WHERE date(created_at) < ?
+  `, [firstDay]);
+
+  const createdRows = await all<{ date: string; count: number }>(`
+    SELECT date(created_at) AS date, COUNT(*) AS count
+    FROM prospects
+    WHERE date(created_at) >= ?
+      AND date(created_at) <= ?
+    GROUP BY date(created_at)
+  `, [firstDay, today]);
+
+  const sentByDay = new Map(sentRows.map((row) => [row.date, Number(row.count)]));
+  const createdByDay = new Map(createdRows.map((row) => [row.date, Number(row.count)]));
+  let cumulativeProspects = Number(createdBefore?.count || 0);
+
+  return {
+    messagesSent7d: days.map((date) => ({
+      date,
+      label: shortDayLabel(date),
+      value: sentByDay.get(date) || 0,
+    })),
+    prospects7d: days.map((date) => {
+      cumulativeProspects += createdByDay.get(date) || 0;
+      return {
+        date,
+        label: shortDayLabel(date),
+        value: cumulativeProspects,
+      };
+    }),
   };
 }
 
@@ -457,6 +526,10 @@ export async function runProspectAction(formData: FormData) {
       `, [id, topic, preparationNotes]);
       await upsertGeneratedMessage(id, "report_no_note", noNoteReportFallback(prospect.name, topic, prospect.position, prospect.about, prospect.recommended_template), null);
       await addEvent(id, "brief_strategy_updated", `Brief topic updated to ${topic}.`, today);
+    } else if (intent === "updateProspectNotes") {
+      const notes = String(formData.get("notes") || "").trim();
+      await run("UPDATE prospects SET notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [notes, id]);
+      await addEvent(id, "notes_updated", notes ? "Internal note updated." : "Internal note cleared.", today);
     } else if (intent === "markReportSent") {
       const followupDate = addDaysIso(today, 2);
       await run("UPDATE prospects SET status = 'report_sent', report_sent_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [today, id]);
@@ -718,6 +791,10 @@ function addDaysIso(dateIso: string, days: number) {
   const date = new Date(`${dateIso}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function shortDayLabel(dateIso: string) {
+  return dateIso.slice(5).replace("-", "/");
 }
 
 function withDerivedMessages(prospect: Prospect): Prospect {

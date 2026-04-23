@@ -182,6 +182,33 @@ export default function ProspectDetail() {
               <ReplyPanel prospect={prospect} replies={replies} />
             </section>
 
+            <CollapsibleSection title="Internal note" detail="Small private CRM note." defaultOpen={Boolean(prospect.notes)}>
+              <Form method="post" className="mt-4 border-t border-stone-200 pt-3">
+                <input type="hidden" name="intent" value="updateProspectNotes" />
+                <input type="hidden" name="prospectId" value={prospect.id} />
+                {prospect.notes ? (
+                  <div className="mb-3 rounded-md border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700">
+                    <p className="whitespace-pre-wrap">{prospect.notes}</p>
+                  </div>
+                ) : null}
+                <label className="text-sm font-semibold" htmlFor="notes">
+                  Note
+                </label>
+                <textarea
+                  id="notes"
+                  name="notes"
+                  defaultValue={prospect.notes || ""}
+                  rows={3}
+                  placeholder="Tiny internal note, context, next angle..."
+                  className="mt-2 min-h-24 w-full resize-y rounded-md border border-stone-300 bg-stone-50 px-3 py-2 text-sm outline-none focus:border-teal-700"
+                />
+                <button className="mt-3 inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium hover:border-teal-700">
+                  <Save size={14} />
+                  Save note
+                </button>
+              </Form>
+            </CollapsibleSection>
+
             <section className="rounded-lg border border-stone-300 bg-white p-5">
               <SectionTitle title="Past and future" detail="Task history for this prospect." />
               <div className="mt-4 grid gap-3">
