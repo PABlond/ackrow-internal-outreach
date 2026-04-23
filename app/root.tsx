@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { Links, Meta, Outlet, Scripts, ScrollRestoration, isRouteErrorResponse, useRouteError } from "react-router";
 
-import { ThemeToggle } from "./components/theme-toggle";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import "./app.css";
+
+const themeScript = `(function(){try{var t=localStorage.getItem("theme")||"system";var d=t==="dark"||(t==="system"&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(d)document.documentElement.classList.add("dark")}catch(e){}})();`;
 
 export function Layout({ children }: { children: ReactNode }) {
   return (
@@ -12,14 +14,9 @@ export function Layout({ children }: { children: ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `try{if(localStorage.getItem("theme")==="dark")document.documentElement.classList.add("dark")}catch(e){}`,
-          }}
-        />
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body>
-        <ThemeToggle />
+      <body className="bg-background text-foreground antialiased">
         {children}
         <ScrollRestoration />
         <Scripts />
@@ -42,12 +39,18 @@ export function ErrorBoundary() {
       : "Unexpected error";
 
   return (
-    <main className="min-h-screen bg-stone-100 px-6 py-12 text-stone-950">
-      <div className="mx-auto max-w-2xl rounded-lg border border-stone-300 bg-white p-6">
-        <p className="text-sm font-semibold uppercase text-teal-700">Outreach app</p>
-        <h1 className="mt-2 text-3xl font-semibold">{status}</h1>
-        <p className="mt-3 text-stone-600">{message}</p>
-      </div>
+    <main className="min-h-screen bg-background px-6 py-12">
+      <Card className="mx-auto max-w-2xl">
+        <CardHeader>
+          <CardDescription className="text-xs font-semibold uppercase tracking-wide text-primary">
+            Outreach app
+          </CardDescription>
+          <CardTitle className="text-3xl">{status}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground">{message}</p>
+        </CardContent>
+      </Card>
     </main>
   );
 }

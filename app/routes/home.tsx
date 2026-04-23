@@ -1,12 +1,50 @@
 import { useEffect, useState } from "react";
 import { Form, Link, redirect, useLoaderData } from "react-router";
-import { AtSign, CalendarCheck, Check, Clipboard, Clock, ExternalLink, LinkIcon, Plus, Save, Search, Send, SkipForward, UserPlus, UserCheck } from "lucide-react";
+import {
+  AtSign,
+  CalendarCheck,
+  Check,
+  Clipboard,
+  Clock,
+  ExternalLink,
+  LinkIcon,
+  Send,
+  UserCheck,
+  UserPlus,
+} from "lucide-react";
+import { toast } from "sonner";
 
 import type { Route } from "./+types/home";
-import { getDashboard, runProspectAction, type DashboardStatsPoint, type Prospect, type Task } from "~/lib/outreach.server";
+import {
+  getDashboard,
+  runProspectAction,
+  type DashboardStatsPoint,
+  type Prospect,
+  type Task,
+} from "~/lib/outreach.server";
+import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
+import { Input } from "~/components/ui/input";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "~/components/ui/accordion";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "~/components/ui/table";
+import { statusVariant } from "~/components/prospects/status-badge";
+import { cn } from "~/lib/utils";
 
 export const meta: Route.MetaFunction = () => [
-  { title: "Tempolis Outreach" },
+  { title: "Dashboard · Tempolis Outreach" },
   { name: "description", content: "Internal Tempolis outreach tracker." },
 ];
 
@@ -22,172 +60,275 @@ export async function action({ request }: Route.ActionArgs) {
 
 export default function Home() {
   const data = useLoaderData<typeof loader>();
-  const activeProspects = data.prospects.filter((prospect) => !["saved_for_later", "skipped", "archived_declined", "archived"].includes(prospect.status));
+  const activeProspects = data.prospects.filter(
+    (prospect) =>
+      !["saved_for_later", "skipped", "archived_declined", "archived"].includes(prospect.status),
+  );
   const todoItems = buildTodoItems(data);
 
   return (
-    <main className="min-h-screen bg-stone-100 px-4 py-8 text-stone-950 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl">
-        <header className="flex flex-col gap-4 border-b border-stone-300 pb-6 md:flex-row md:items-end md:justify-between">
+    <div className="px-6 py-8">
+      <div className="mx-auto max-w-7xl space-y-8">
+        <header className="flex flex-col gap-4 border-b pb-6 md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-teal-700">Internal CRM</p>
-            <h1 className="mt-1 text-4xl font-semibold tracking-normal">Tempolis Outreach</h1>
-            <p className="mt-2 max-w-2xl text-stone-600">
-              Daily command center for LinkedIn requests, accepted connections, shared briefs, and follow-ups.
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Dashboard</p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight">Today's pipeline</h1>
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+              Daily command center for LinkedIn requests, accepted connections, shared briefs, and
+              follow-ups.
             </p>
           </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <Link
-              to="/search"
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-4 font-medium text-stone-900 hover:border-teal-700"
-            >
-              <Search size={18} />
-              Search CRM
-            </Link>
-            <Link
-              to="/discover"
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-4 font-medium text-stone-900 hover:border-teal-700"
-            >
-              <UserPlus size={18} />
-              Discover
-            </Link>
-            <Link
-              to="/twitter"
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-4 font-medium text-stone-900 hover:border-teal-700"
-            >
-              <AtSign size={18} />
-              Twitter/X
-            </Link>
-            <Link
-              to="/batch"
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-teal-700 bg-teal-700 px-4 font-medium text-white hover:bg-teal-800"
-            >
-              <Plus size={18} />
-              New batch
-            </Link>
-            <div className="rounded-lg border border-stone-300 bg-white px-4 py-3">
-              <p className="text-xs font-semibold uppercase text-stone-500">Today</p>
-              <p className="text-lg font-semibold">{data.today}</p>
-            </div>
+          <div className="rounded-lg border bg-card px-4 py-3">
+            <p className="text-xs font-semibold uppercase text-muted-foreground">Today</p>
+            <p className="text-lg font-semibold">{data.today}</p>
           </div>
         </header>
 
-        <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Metric label="Prospects" value={data.prospects.length} />
-          <Metric label="Pending connections" value={data.sections.pendingConnections.length} />
-          <Metric label="Reports to send" value={data.sections.acceptedReport.length} />
-          <Metric label="Active conversations" value={data.sections.conversationsActive.length} />
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard label="Prospects" value={data.prospects.length} />
+          <MetricCard label="Pending connections" value={data.sections.pendingConnections.length} />
+          <MetricCard label="Reports to send" value={data.sections.acceptedReport.length} />
+          <MetricCard label="Active conversations" value={data.sections.conversationsActive.length} />
         </section>
 
-        <section className="mt-6 grid gap-4 lg:grid-cols-2">
-          <StatsCard title="Messages sent" detail="Last 7 days, across LinkedIn and Twitter/X." points={data.stats.messagesSent7d} />
-          <StatsCard title="Prospect base" detail="Total prospects in CRM over the last 7 days." points={data.stats.prospects7d} />
+        <section className="grid gap-4 lg:grid-cols-2">
+          <StatsChart
+            title="Messages sent"
+            detail="Last 7 days, across LinkedIn and Twitter/X."
+            points={data.stats.messagesSent7d}
+            totalLabel="total"
+          />
+          <StatsChart
+            title="Prospect base"
+            detail="Total prospects in CRM over the last 7 days."
+            points={data.stats.prospects7d}
+            totalLabel="today"
+          />
         </section>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-8">
             <section>
               <SectionTitle title="Todo" detail="Highest-priority actions across the pipeline." />
               <div className="mt-3 grid gap-3">
-                {todoItems.length ? todoItems.map((item) => <TodoItemRow key={item.key} item={item} />) : <EmptyState />}
+                {todoItems.length ? (
+                  todoItems.map((item) => <TodoItemRow key={item.key} item={item} />)
+                ) : (
+                  <EmptyState />
+                )}
               </div>
             </section>
 
             <section>
               <SectionTitle title="Today" detail="What needs attention first." />
               <div className="mt-3 grid gap-3">
-                <TodayPanel storageKey="connect-today" title="Connect today" items={data.sections.toConnect}>
+                <TodayPanel
+                  storageKey="connect-today"
+                  title="Connect today"
+                  items={data.sections.toConnect}
+                >
                   {(task) => {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
-                    return prospect ? <DashboardTaskLink prospect={prospect} detail="Send LinkedIn request with note, or without note if capped" /> : null;
+                    return prospect ? (
+                      <DashboardTaskLink
+                        prospect={prospect}
+                        detail="Send LinkedIn request with note, or without note if capped"
+                      />
+                    ) : null;
                   }}
                 </TodayPanel>
-                <TodayPanel storageKey="twitter-dms" title="Twitter/X DMs today" items={data.sections.twitterToContact}>
+                <TodayPanel
+                  storageKey="twitter-dms"
+                  title="Twitter/X DMs today"
+                  items={data.sections.twitterToContact}
+                >
                   {(task) => {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
-                    return prospect ? <DashboardTaskLink prospect={prospect} detail="Send Twitter/X first touch manually" /> : null;
+                    return prospect ? (
+                      <DashboardTaskLink
+                        prospect={prospect}
+                        detail="Send Twitter/X first touch manually"
+                      />
+                    ) : null;
                   }}
                 </TodayPanel>
-                <TodayPanel storageKey="accepted-report" title="Accepted, report to send" items={data.sections.acceptedReport}>
-                  {(prospect) => <DashboardTaskLink prospect={prospect} detail="Connection accepted, report to send" />}
+                <TodayPanel
+                  storageKey="accepted-report"
+                  title="Accepted, report to send"
+                  items={data.sections.acceptedReport}
+                >
+                  {(prospect) => (
+                    <DashboardTaskLink
+                      prospect={prospect}
+                      detail="Connection accepted, report to send"
+                    />
+                  )}
                 </TodayPanel>
-                <TodayPanel storageKey="brief-urls-missing" title="Brief URLs missing" items={data.sections.missingBriefUrls}>
-                  {(prospect) => <DashboardTaskLink prospect={prospect} detail={`Prepare brief URL for ${prospect.brief_topic || "brief"}`} />}
+                <TodayPanel
+                  storageKey="brief-urls-missing"
+                  title="Brief URLs missing"
+                  items={data.sections.missingBriefUrls}
+                >
+                  {(prospect) => (
+                    <DashboardTaskLink
+                      prospect={prospect}
+                      detail={`Prepare brief URL for ${prospect.brief_topic || "brief"}`}
+                    />
+                  )}
                 </TodayPanel>
-                <TodayPanel storageKey="followups-due" title="Follow-ups due" items={data.sections.followupsDue}>
+                <TodayPanel
+                  storageKey="followups-due"
+                  title="Follow-ups due"
+                  items={data.sections.followupsDue}
+                >
                   {(task) => {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
-                    return prospect ? <DashboardTaskLink prospect={prospect} detail={`Follow-up due ${task.due_date || ""}`} /> : null;
+                    return prospect ? (
+                      <DashboardTaskLink
+                        prospect={prospect}
+                        detail={`Follow-up due ${task.due_date || ""}`}
+                      />
+                    ) : null;
                   }}
                 </TodayPanel>
-                <TodayPanel storageKey="followups-scheduled" title="Follow-ups scheduled" items={data.sections.followupsScheduled}>
+                <TodayPanel
+                  storageKey="followups-scheduled"
+                  title="Follow-ups scheduled"
+                  items={data.sections.followupsScheduled}
+                >
                   {(task) => {
                     const prospect = data.prospects.find((item) => item.id === task.prospect_id);
-                    return prospect ? <DashboardTaskLink prospect={prospect} detail={`Follow-up scheduled ${task.due_date || ""}`} /> : null;
+                    return prospect ? (
+                      <DashboardTaskLink
+                        prospect={prospect}
+                        detail={`Follow-up scheduled ${task.due_date || ""}`}
+                      />
+                    ) : null;
                   }}
                 </TodayPanel>
-                <TodayPanel storageKey="active-conversations" title="Active conversations" items={data.sections.conversationsActive}>
-                  {(prospect) => <DashboardTaskLink prospect={prospect} detail="Prospect replied, conversation in progress" />}
+                <TodayPanel
+                  storageKey="active-conversations"
+                  title="Active conversations"
+                  items={data.sections.conversationsActive}
+                >
+                  {(prospect) => (
+                    <DashboardTaskLink
+                      prospect={prospect}
+                      detail="Prospect replied, conversation in progress"
+                    />
+                  )}
                 </TodayPanel>
-                <TodayPanel storageKey="pending-connections" title="Pending connections" items={data.sections.pendingConnections}>
-                  {(prospect) => <DashboardTaskLink prospect={prospect} detail={`${outreachModeLabel(prospect)} · sent ${prospect.connection_sent_date || "today"} · watch acceptance`} />}
+                <TodayPanel
+                  storageKey="pending-connections"
+                  title="Pending connections"
+                  items={data.sections.pendingConnections}
+                >
+                  {(prospect) => (
+                    <DashboardTaskLink
+                      prospect={prospect}
+                      detail={`${outreachModeLabel(prospect)} · sent ${prospect.connection_sent_date || "today"} · watch acceptance`}
+                    />
+                  )}
                 </TodayPanel>
               </div>
             </section>
 
-            <PersistentDetails storageKey="prospects-in-progress" defaultOpen={activeProspects.length > 0}>
-              <summary className="flex cursor-pointer list-none items-end justify-between gap-3">
-                <SectionTitle title="Prospects in progress" detail={`${activeProspects.length} profiles in the working set.`} />
-                <Badge tone={activeProspects.length ? "blue" : "green"}>{activeProspects.length}</Badge>
-              </summary>
-              <ProspectsTable prospects={activeProspects} />
-            </PersistentDetails>
+            <ProspectsInProgressPanel prospects={activeProspects} />
           </div>
 
-          <aside className="h-fit rounded-lg border border-stone-300 bg-white p-5 lg:sticky lg:top-6">
-            <SectionTitle title="Timeline" detail="Latest events." />
-            <div className="mt-4 space-y-4">
-              {data.events.length === 0 ? (
-                <EmptyState />
-              ) : (
-                data.events.map((event) => (
-                  <div key={event.id} className="border-l-2 border-teal-700 pl-3">
-                    <p className="font-medium">{event.name || "System"}</p>
-                    <p className="text-sm text-stone-600">{event.type}</p>
-                    <p className="mt-1 text-xs text-stone-500">
-                      {event.happened_at} · {event.note}
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
+          <aside className="h-fit lg:sticky lg:top-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Timeline</CardTitle>
+                <p className="text-sm text-muted-foreground">Latest events.</p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {data.events.length === 0 ? (
+                  <EmptyState />
+                ) : (
+                  data.events.map((event) => (
+                    <div key={event.id} className="border-l-2 border-primary pl-3">
+                      <p className="font-medium">{event.name || "System"}</p>
+                      <p className="text-sm text-muted-foreground">{event.type}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {event.happened_at} · {event.note}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
           </aside>
         </div>
       </div>
-    </main>
+    </div>
+  );
+}
+
+function ProspectsInProgressPanel({ prospects }: { prospects: Prospect[] }) {
+  const storageKey = "outreach.dashboard.details.prospects-in-progress";
+  const defaultOpen = prospects.length > 0;
+  const [value, setValue] = useState(defaultOpen ? "item" : "");
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(storageKey);
+    if (saved === "open") setValue("item");
+    if (saved === "closed") setValue("");
+  }, []);
+
+  return (
+    <Accordion
+      type="single"
+      collapsible
+      value={value}
+      onValueChange={(next) => {
+        setValue(next);
+        window.localStorage.setItem(storageKey, next ? "open" : "closed");
+      }}
+    >
+      <AccordionItem value="item" className="border-none">
+        <AccordionTrigger className="rounded-lg border bg-card px-4 py-3 hover:no-underline data-[state=open]:rounded-b-none">
+          <div className="flex w-full items-center justify-between gap-3 pr-3">
+            <div className="text-left">
+              <h2 className="text-lg font-semibold">Prospects in progress</h2>
+              <p className="text-sm font-normal text-muted-foreground">
+                {prospects.length} profiles in the working set.
+              </p>
+            </div>
+            <Badge variant={prospects.length ? "info" : "success"}>{prospects.length}</Badge>
+          </div>
+        </AccordionTrigger>
+        <AccordionContent className="rounded-b-lg border border-t-0 bg-card p-0">
+          <ProspectsTable prospects={prospects} />
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 }
 
 function DashboardTaskLink({ prospect, detail }: { prospect: Prospect; detail: string }) {
   return (
-    <div className="grid gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3 hover:border-teal-700 md:grid-cols-[1fr_auto] md:items-center">
+    <div className="grid gap-2 rounded-lg border bg-muted/30 p-3 transition-colors hover:border-primary md:grid-cols-[1fr_auto] md:items-center">
       <Link to={`/prospects/${prospect.id}`} className="block">
         <TaskIntro icon={<Clock size={18} />} title={prospect.name} detail={detail} />
       </Link>
       <div className="flex flex-wrap items-center gap-2">
-        <Badge>{prospect.priority_tag}</Badge>
-        <Badge tone={prospect.outreach_mode === "no_note" ? "blue" : "green"}>{outreachModeLabel(prospect)}</Badge>
-        <Badge tone="blue">{prospect.status}</Badge>
-        <a
-          href={prospect.twitter_url || prospect.profile_url}
-          target="_blank"
-          rel="noreferrer"
-          aria-label={`Open ${prospect.name} profile`}
-          title={prospect.source_channel === "twitter" ? "Open X profile" : "Open LinkedIn profile"}
-          className="inline-flex size-7 items-center justify-center rounded-full border border-stone-300 bg-white text-stone-600 hover:border-teal-700 hover:text-teal-800"
-        >
-          <ExternalLink size={14} />
-        </a>
+        {prospect.priority_tag ? <Badge variant="muted">{prospect.priority_tag}</Badge> : null}
+        <Badge variant={prospect.outreach_mode === "no_note" ? "info" : "success"}>
+          {outreachModeLabel(prospect)}
+        </Badge>
+        <Badge variant={statusVariant(prospect.status)}>{prospect.status}</Badge>
+        <Button asChild variant="outline" size="icon" className="size-8">
+          <a
+            href={prospect.twitter_url || prospect.profile_url}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Open ${prospect.name} profile`}
+            title={prospect.source_channel === "twitter" ? "Open X profile" : "Open LinkedIn profile"}
+          >
+            <ExternalLink className="size-3.5" />
+          </a>
+        </Button>
       </div>
     </div>
   );
@@ -231,7 +372,10 @@ function buildTodoItems(data: DashboardData): TodoItem[] {
       key: `followup-${task.id}`,
       priority: task.due_date && task.due_date < data.today ? 20 : 25,
       title: `Send follow-up to ${task.name || prospect?.name || "prospect"}`,
-      detail: task.due_date && task.due_date < data.today ? `Overdue since ${task.due_date}` : `Due ${task.due_date || "today"}`,
+      detail:
+        task.due_date && task.due_date < data.today
+          ? `Overdue since ${task.due_date}`
+          : `Due ${task.due_date || "today"}`,
       kind: "followup",
       prospect,
       task,
@@ -266,7 +410,9 @@ function buildTodoItems(data: DashboardData): TodoItem[] {
     });
   }
 
-  for (const prospect of data.sections.missingBriefUrls.filter((item) => item.status !== "connection_sent")) {
+  for (const prospect of data.sections.missingBriefUrls.filter(
+    (item) => item.status !== "connection_sent",
+  )) {
     todos.push({
       key: `brief-url-${prospect.id}`,
       priority: 40,
@@ -299,103 +445,184 @@ function buildTodoItems(data: DashboardData): TodoItem[] {
 
 function TodoItemRow({ item }: { item: TodoItem }) {
   const icon =
-    item.kind === "message" ? <Send size={18} /> :
-    item.kind === "followup" ? <CalendarCheck size={18} /> :
-    item.kind === "connection" ? <UserPlus size={18} /> :
-    item.kind === "twitter" ? <AtSign size={18} /> :
-    item.kind === "brief" ? <LinkIcon size={18} /> :
-    <Clock size={18} />;
+    item.kind === "message" ? (
+      <Send size={18} />
+    ) : item.kind === "followup" ? (
+      <CalendarCheck size={18} />
+    ) : item.kind === "connection" ? (
+      <UserPlus size={18} />
+    ) : item.kind === "twitter" ? (
+      <AtSign size={18} />
+    ) : item.kind === "brief" ? (
+      <LinkIcon size={18} />
+    ) : (
+      <Clock size={18} />
+    );
 
   return (
-    <div className="grid gap-3 rounded-lg border border-stone-300 bg-white p-4 md:grid-cols-[1fr_auto] md:items-center">
-      <Link to={item.prospect ? `/prospects/${item.prospect.id}` : "/"} className="block">
-        <TaskIntro icon={icon} title={item.title} detail={item.detail} />
-      </Link>
-      <div className="flex flex-wrap gap-2">
-        {item.prospect ? <ProfileButton prospect={item.prospect} /> : null}
-        {item.kind === "message" && item.prospect?.post_acceptance_message ? <CopyButton label="Copy message" value={item.prospect.post_acceptance_message} /> : null}
-        {item.kind === "message" && item.prospect ? <ActionButton intent="markReportSent" prospectId={item.prospect.id} label="Mark sent" icon={<Check size={16} />} primary /> : null}
-        {item.kind === "followup" && item.prospect ? <CopyButton label="Copy follow-up" value={followupCopy(item.prospect, item.task)} /> : null}
-        {item.kind === "followup" && item.task?.prospect_id ? (
-          <ActionButton
-            intent={item.task.type === "send_twitter_followup" ? "markTwitterFollowupSent" : "markFollowupSent"}
-            prospectId={item.task.prospect_id}
-            label="Mark sent"
-            icon={<Check size={16} />}
-            primary
-          />
-        ) : null}
-        {item.kind === "connection" && item.prospect?.connection_message ? <CopyButton label="Copy note" value={item.prospect.connection_message} /> : null}
-        {item.kind === "connection" && item.prospect ? <ActionButton intent="markConnectionSentWithNote" prospectId={item.prospect.id} label="Sent with note" icon={<Send size={16} />} primary /> : null}
-        {item.kind === "connection" && item.prospect ? <ActionButton intent="markConnectionSentWithoutNote" prospectId={item.prospect.id} label="Sent without note" icon={<UserCheck size={16} />} /> : null}
-        {item.kind === "twitter" && item.prospect?.twitter_dm_message ? <CopyButton label="Copy DM" value={item.prospect.twitter_dm_message} /> : null}
-        {item.kind === "twitter" && item.prospect ? <ActionButton intent="markTwitterDmSent" prospectId={item.prospect.id} label="Mark DM sent" icon={<Send size={16} />} primary /> : null}
-        {item.kind === "pending" && item.prospect ? <ActionLink href={item.prospect.profile_url} label="Check" icon={<ExternalLink size={16} />} /> : null}
-        {item.kind === "brief" && item.prospect ? (
-          <Link
-            to={`/prospects/${item.prospect.id}`}
-            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800 hover:border-teal-700"
-          >
-            <LinkIcon size={16} />
-            Add URL
-          </Link>
-        ) : null}
-      </div>
-    </div>
+    <Card>
+      <CardContent className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center">
+        <Link to={item.prospect ? `/prospects/${item.prospect.id}` : "/"} className="block">
+          <TaskIntro icon={icon} title={item.title} detail={item.detail} />
+        </Link>
+        <div className="flex flex-wrap gap-2">
+          {item.prospect ? <ProfileButton prospect={item.prospect} /> : null}
+          {item.kind === "message" && item.prospect?.post_acceptance_message ? (
+            <CopyButton label="Copy message" value={item.prospect.post_acceptance_message} />
+          ) : null}
+          {item.kind === "message" && item.prospect ? (
+            <ActionButton
+              intent="markReportSent"
+              prospectId={item.prospect.id}
+              label="Mark sent"
+              icon={<Check size={16} />}
+              variant="default"
+            />
+          ) : null}
+          {item.kind === "followup" && item.prospect ? (
+            <CopyButton label="Copy follow-up" value={followupCopy(item.prospect, item.task)} />
+          ) : null}
+          {item.kind === "followup" && item.task?.prospect_id ? (
+            <ActionButton
+              intent={
+                item.task.type === "send_twitter_followup"
+                  ? "markTwitterFollowupSent"
+                  : "markFollowupSent"
+              }
+              prospectId={item.task.prospect_id}
+              label="Mark sent"
+              icon={<Check size={16} />}
+              variant="default"
+            />
+          ) : null}
+          {item.kind === "connection" && item.prospect?.connection_message ? (
+            <CopyButton label="Copy note" value={item.prospect.connection_message} />
+          ) : null}
+          {item.kind === "connection" && item.prospect ? (
+            <ActionButton
+              intent="markConnectionSentWithNote"
+              prospectId={item.prospect.id}
+              label="Sent with note"
+              icon={<Send size={16} />}
+              variant="default"
+            />
+          ) : null}
+          {item.kind === "connection" && item.prospect ? (
+            <ActionButton
+              intent="markConnectionSentWithoutNote"
+              prospectId={item.prospect.id}
+              label="Sent without note"
+              icon={<UserCheck size={16} />}
+              variant="outline"
+            />
+          ) : null}
+          {item.kind === "twitter" && item.prospect?.twitter_dm_message ? (
+            <CopyButton label="Copy DM" value={item.prospect.twitter_dm_message} />
+          ) : null}
+          {item.kind === "twitter" && item.prospect ? (
+            <ActionButton
+              intent="markTwitterDmSent"
+              prospectId={item.prospect.id}
+              label="Mark DM sent"
+              icon={<Send size={16} />}
+              variant="default"
+            />
+          ) : null}
+          {item.kind === "pending" && item.prospect ? (
+            <Button asChild variant="outline" size="sm">
+              <a href={item.prospect.profile_url} target="_blank" rel="noreferrer">
+                <ExternalLink className="size-4" />
+                Check
+              </a>
+            </Button>
+          ) : null}
+          {item.kind === "brief" && item.prospect ? (
+            <Button asChild variant="outline" size="sm">
+              <Link to={`/prospects/${item.prospect.id}`}>
+                <LinkIcon className="size-4" />
+                Add URL
+              </Link>
+            </Button>
+          ) : null}
+          {item.kind === "brief" && item.prospect ? (
+            <BriefUrlForm prospectId={item.prospect.id} />
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BriefUrlForm({ prospectId }: { prospectId: number }) {
+  return (
+    <Form method="post" className="flex items-center gap-2">
+      <input type="hidden" name="intent" value="addBriefUrl" />
+      <input type="hidden" name="prospectId" value={prospectId} />
+      <Input
+        name="sharedUrl"
+        type="url"
+        required
+        placeholder="https://tempolis.com/share/..."
+        className="h-9 w-64"
+      />
+      <Button type="submit" variant="secondary" size="sm">
+        <LinkIcon className="size-4" />
+        Save
+      </Button>
+    </Form>
   );
 }
 
 function ProfileButton({ prospect }: { prospect: Prospect }) {
   if (prospect.source_channel === "twitter") {
     return (
-      <a
-        href={prospect.twitter_url || prospect.profile_url}
-        target="_blank"
-        rel="noreferrer"
-        aria-label={`Open ${prospect.name} on X`}
-        title="Open X profile"
-        className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-md border border-stone-900 bg-stone-900 px-3 text-sm font-black text-white hover:bg-stone-700"
+      <Button
+        asChild
+        size="sm"
+        className="bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
       >
-        X
-      </a>
+        <a
+          href={prospect.twitter_url || prospect.profile_url}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`Open ${prospect.name} on X`}
+          title="Open X profile"
+        >
+          X
+        </a>
+      </Button>
     );
   }
   return (
-    <a
-      href={prospect.profile_url}
-      target="_blank"
-      rel="noreferrer"
-      aria-label={`Open ${prospect.name} on LinkedIn`}
-      title="Open LinkedIn profile"
-      className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-md border border-[#0a66c2] bg-[#0a66c2] px-3 text-sm font-black text-white hover:bg-[#004182]"
+    <Button
+      asChild
+      size="sm"
+      className="bg-[#0a66c2] text-white hover:bg-[#004182] dark:bg-[#0a66c2] dark:hover:bg-[#004182]"
     >
-      in
-    </a>
-  );
-}
-
-function ActionLink({ href, label, icon }: { href: string; label: string; icon: React.ReactNode }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800 hover:border-teal-700"
-    >
-      {icon}
-      {label}
-    </a>
+      <a
+        href={prospect.profile_url}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={`Open ${prospect.name} on LinkedIn`}
+        title="Open LinkedIn profile"
+      >
+        in
+      </a>
+    </Button>
   );
 }
 
 function followupCopy(prospect: Prospect, task?: Task) {
-  return task?.type === "send_twitter_followup" ? prospect.twitter_followup_message || prospect.followup_message || "" : prospect.followup_message || "";
+  return task?.type === "send_twitter_followup"
+    ? prospect.twitter_followup_message || prospect.followup_message || ""
+    : prospect.followup_message || "";
 }
 
 function pendingTodoAgeMs(prospect: Prospect, watchTask?: Task) {
   if (prospect.pending_checked_at) return dateAgeMs(prospect.pending_checked_at);
   if (watchTask?.created_at) return dateAgeMs(watchTask.created_at);
-  if (prospect.connection_sent_date && prospect.connection_sent_date < todayIsoClient()) return 4 * 60 * 60 * 1000;
+  if (prospect.connection_sent_date && prospect.connection_sent_date < todayIsoClient())
+    return 4 * 60 * 60 * 1000;
   if (prospect.connection_sent_date) return 0;
   return null;
 }
@@ -429,43 +656,53 @@ function todayIsoClient() {
 
 function ProspectsTable({ prospects }: { prospects: Prospect[] }) {
   return (
-    <div className="mt-3 overflow-x-auto rounded-lg border border-stone-300 bg-white">
-      <table className="min-w-[900px] w-full border-collapse text-sm">
-        <thead className="bg-stone-50 text-left text-xs font-bold uppercase text-stone-500">
-          <tr>
-            <th className="border-b border-stone-300 px-4 py-3">Prospect</th>
-            <th className="border-b border-stone-300 px-4 py-3">Status</th>
-            <th className="border-b border-stone-300 px-4 py-3">Wave</th>
-            <th className="border-b border-stone-300 px-4 py-3">Brief</th>
-            <th className="border-b border-stone-300 px-4 py-3">Next</th>
-          </tr>
-        </thead>
-        <tbody>
+    <div className="overflow-x-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Prospect</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Wave</TableHead>
+            <TableHead>Brief</TableHead>
+            <TableHead>Next</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {prospects.map((prospect) => (
-            <tr key={prospect.id} className="hover:bg-stone-50">
-              <td className="border-b border-stone-200 px-4 py-3">
-                <Link to={`/prospects/${prospect.id}`} className="font-semibold text-stone-950 hover:text-teal-800">
+            <TableRow key={prospect.id}>
+              <TableCell>
+                <Link
+                  to={`/prospects/${prospect.id}`}
+                  className="font-medium text-foreground hover:text-primary"
+                >
                   {prospect.name}
                 </Link>
-                <p className="mt-1 max-w-xl truncate text-stone-600">{prospect.position}</p>
-              </td>
-              <td className="border-b border-stone-200 px-4 py-3"><Badge tone="blue">{prospect.status}</Badge></td>
-              <td className="border-b border-stone-200 px-4 py-3">{prospect.wave || "-"}</td>
-              <td className="border-b border-stone-200 px-4 py-3">{prospect.brief_topic || "-"}</td>
-              <td className="border-b border-stone-200 px-4 py-3 text-stone-600">{nextActionLabel(prospect)}</td>
-            </tr>
+                <p className="mt-0.5 max-w-xl truncate text-xs text-muted-foreground">
+                  {prospect.position}
+                </p>
+              </TableCell>
+              <TableCell>
+                <Badge variant={statusVariant(prospect.status)}>{prospect.status}</Badge>
+              </TableCell>
+              <TableCell className="text-muted-foreground">{prospect.wave || "-"}</TableCell>
+              <TableCell className="text-muted-foreground">{prospect.brief_topic || "-"}</TableCell>
+              <TableCell className="text-muted-foreground">{nextActionLabel(prospect)}</TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
 
 function nextActionLabel(prospect: Prospect) {
-  if (prospect.status === "to_contact" && prospect.source_channel === "twitter") return "Send Twitter/X DM";
-  if (prospect.status === "to_contact" && prospect.contact_now) return "Send request with note or without note";
+  if (prospect.status === "to_contact" && prospect.source_channel === "twitter")
+    return "Send Twitter/X DM";
+  if (prospect.status === "to_contact" && prospect.contact_now)
+    return "Send request with note or without note";
   if (prospect.status === "twitter_contacted") return "Wait for Twitter/X follow-up";
-  if (prospect.status === "connection_sent") return `${outreachModeLabel(prospect)} · watch acceptance`;
+  if (prospect.status === "connection_sent")
+    return `${outreachModeLabel(prospect)} · watch acceptance`;
   if (prospect.status === "accepted") return "Send first message";
   if (prospect.status === "report_sent") return "Wait for follow-up";
   if (prospect.status === "conversation_active") return "Conversation in progress";
@@ -475,269 +712,154 @@ function nextActionLabel(prospect: Prospect) {
   return "Review";
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function MetricCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg border border-stone-300 bg-white p-5">
-      <p className="text-sm text-stone-600">{label}</p>
-      <p className="mt-1 text-3xl font-semibold">{value}</p>
-    </div>
+    <Card>
+      <CardContent className="p-5">
+        <p className="text-sm text-muted-foreground">{label}</p>
+        <p className="mt-1 text-3xl font-semibold tracking-tight">{value}</p>
+      </CardContent>
+    </Card>
   );
 }
 
-function StatsCard({ title, detail, points }: { title: string; detail: string; points: DashboardStatsPoint[] }) {
+function StatsChart({
+  title,
+  detail,
+  points,
+  totalLabel,
+}: {
+  title: string;
+  detail: string;
+  points: DashboardStatsPoint[];
+  totalLabel: string;
+}) {
   const max = Math.max(1, ...points.map((point) => point.value));
   const total = points.reduce((sum, point) => sum + point.value, 0);
   const latest = points.at(-1)?.value || 0;
 
   return (
-    <div className="rounded-lg border border-stone-300 bg-white p-5">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <p className="mt-1 text-sm text-stone-600">{detail}</p>
-        </div>
-        <div className="text-left sm:text-right">
-          <p className="text-2xl font-semibold">{latest}</p>
-          <p className="text-xs font-medium uppercase text-stone-500">{title === "Messages sent" ? `${total} total` : "today"}</p>
-        </div>
-      </div>
-      <div className="mt-5 grid h-40 grid-cols-7 items-end gap-2 border-b border-stone-300 pb-2">
-        {points.map((point) => (
-          <div key={point.date} className="flex h-full flex-col justify-end gap-2">
-            <div className="flex min-h-6 items-center justify-center text-xs font-semibold text-stone-600">{point.value}</div>
-            <div
-              className="min-h-2 rounded-t-md bg-teal-700"
-              style={{ height: point.value === 0 ? "0px" : `${Math.max(8, Math.round((point.value / max) * 104))}px` }}
-              title={`${point.date}: ${point.value}`}
-            />
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">{title}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
           </div>
-        ))}
-      </div>
-      <div className="mt-2 grid grid-cols-7 gap-2 text-center text-xs text-stone-500">
-        {points.map((point) => (
-          <span key={point.date}>{point.label}</span>
-        ))}
-      </div>
-    </div>
+          <div className="text-left sm:text-right">
+            <p className="text-2xl font-semibold tracking-tight">{latest}</p>
+            <p className="text-xs font-medium uppercase text-muted-foreground">
+              {totalLabel === "total" ? `${total} total` : totalLabel}
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 grid h-40 grid-cols-7 items-end gap-2 border-b pb-2">
+          {points.map((point) => (
+            <div key={point.date} className="flex h-full flex-col justify-end gap-2">
+              <div className="flex min-h-6 items-center justify-center text-xs font-semibold text-muted-foreground">
+                {point.value}
+              </div>
+              <div
+                className="min-h-2 rounded-t-md bg-primary/80"
+                style={{
+                  height: point.value === 0 ? "0px" : `${Math.max(8, Math.round((point.value / max) * 104))}px`,
+                }}
+                title={`${point.date}: ${point.value}`}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 grid grid-cols-7 gap-2 text-center text-xs text-muted-foreground">
+          {points.map((point) => (
+            <span key={point.date}>{point.label}</span>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
 function SectionTitle({ title, detail }: { title: string; detail: string }) {
   return (
     <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-      <h2 className="text-xl font-semibold">{title}</h2>
-      <p className="text-sm text-stone-600">{detail}</p>
+      <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+      <p className="text-sm text-muted-foreground">{detail}</p>
     </div>
   );
 }
 
-function TodayPanel<T>({ storageKey, title, items, children }: { storageKey: string; title: string; items: T[]; children: (item: T) => React.ReactNode }) {
-  const defaultOpen = items.length > 0;
-  return (
-    <PersistentDetails storageKey={`today-${storageKey}`} defaultOpen={defaultOpen} className="rounded-lg border border-stone-300 bg-white p-4">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-        <h3 className="font-semibold">{title}</h3>
-        <Badge tone={items.length ? "blue" : "green"}>{items.length}</Badge>
-      </summary>
-      <div className="mt-3 grid gap-2">{items.length ? items.map((item, index) => <div key={index}>{children(item)}</div>) : <EmptyState />}</div>
-    </PersistentDetails>
-  );
-}
-
-function PersistentDetails({
+function TodayPanel<T>({
   storageKey,
-  defaultOpen,
-  className,
+  title,
+  items,
   children,
 }: {
   storageKey: string;
-  defaultOpen: boolean;
-  className?: string;
-  children: React.ReactNode;
+  title: string;
+  items: T[];
+  children: (item: T) => React.ReactNode;
 }) {
-  const key = `outreach.dashboard.details.${storageKey}`;
-  const [open, setOpen] = useState(defaultOpen);
+  const key = `outreach.dashboard.details.today-${storageKey}`;
+  const defaultOpen = items.length > 0;
+  const [value, setValue] = useState(defaultOpen ? "item" : "");
 
   useEffect(() => {
     const saved = window.localStorage.getItem(key);
-    if (saved === "open") setOpen(true);
-    if (saved === "closed") setOpen(false);
+    if (saved === "open") setValue("item");
+    if (saved === "closed") setValue("");
   }, [key]);
 
   return (
-    <details
-      className={className}
-      open={open}
-      onToggle={(event) => {
-        const next = event.currentTarget.open;
-        setOpen(next);
+    <Accordion
+      type="single"
+      collapsible
+      value={value}
+      onValueChange={(next) => {
+        setValue(next);
         window.localStorage.setItem(key, next ? "open" : "closed");
       }}
     >
-      {children}
-    </details>
+      <AccordionItem value="item" className="border-none">
+        <AccordionTrigger className="rounded-lg border bg-card px-4 py-3 hover:no-underline data-[state=open]:rounded-b-none">
+          <div className="flex w-full items-center justify-between gap-3 pr-3">
+            <h3 className="font-semibold">{title}</h3>
+            <Badge variant={items.length ? "info" : "success"}>{items.length}</Badge>
+          </div>
+        </AccordionTrigger>
+        <AccordionContent className="rounded-b-lg border border-t-0 bg-card px-4 pb-4 pt-0">
+          <div className="grid gap-2">
+            {items.length ? (
+              items.map((item, index) => <div key={index}>{children(item)}</div>)
+            ) : (
+              <EmptyState />
+            )}
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 }
 
-function ReportTask({ prospect }: { prospect: Prospect }) {
-  return (
-    <div className="grid gap-3 rounded-lg border border-stone-200 bg-stone-50 p-3 md:grid-cols-[1fr_auto] md:items-center">
-      <TaskIntro icon={<Send size={18} />} title={prospect.name} detail={`${prospect.brief_topic || "No topic"} · first message ready after acceptance`} />
-      <div className="flex flex-wrap gap-2">
-        <CopyButton label="Copy message" value={prospect.post_acceptance_message || ""} />
-        <ActionButton intent="markReportSent" prospectId={prospect.id} label="Mark sent" icon={<Check size={16} />} primary />
-      </div>
-    </div>
-  );
-}
-
-function ConnectTask({ prospect }: { prospect: Prospect }) {
-  return (
-    <div className="grid gap-3 rounded-lg border border-stone-200 bg-stone-50 p-3 md:grid-cols-[1fr_auto] md:items-center">
-      <TaskIntro icon={<Send size={18} />} title={prospect.name} detail={`${prospect.brief_topic || "No topic"} · choose note or no-note request`} />
-      <div className="flex flex-wrap gap-2">
-        <CopyButton label="Copy note" value={prospect.connection_message || ""} />
-        <ActionButton intent="markConnectionSentWithNote" prospectId={prospect.id} label="Sent with note" icon={<Check size={16} />} primary />
-        <ActionButton intent="markConnectionSentWithoutNote" prospectId={prospect.id} label="Sent without note" icon={<UserCheck size={16} />} />
-      </div>
-    </div>
-  );
-}
-
-function BriefUrlTask({ prospect }: { prospect: Prospect }) {
-  return (
-    <div className="rounded-lg border border-stone-200 bg-stone-50 p-3">
-      <TaskIntro icon={<LinkIcon size={18} />} title={prospect.name} detail={`Prepare: ${prospect.brief_topic}`} />
-      <FormShell className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-        <input type="hidden" name="intent" value="addBriefUrl" />
-        <input type="hidden" name="prospectId" value={prospect.id} />
-        <input
-          name="sharedUrl"
-          type="url"
-          required
-          placeholder="https://tempolis.com/share/..."
-          className="min-h-10 rounded-md border border-stone-300 bg-white px-3 outline-none focus:border-teal-700"
-        />
-        <button className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 font-medium hover:border-teal-700">
-          <LinkIcon size={16} />
-          Add URL
-        </button>
-      </FormShell>
-    </div>
-  );
-}
-
-function FollowupTask({ task, prospect, today }: { task: Task; prospect?: Prospect; today: string }) {
-  const overdue = task.due_date && task.due_date < today;
-  return (
-    <div className={`grid gap-3 rounded-lg border bg-stone-50 p-3 md:grid-cols-[1fr_auto] md:items-center ${overdue ? "border-amber-500" : "border-stone-200"}`}>
-      <TaskIntro icon={<CalendarCheck size={18} />} title={task.name || "Unknown"} detail={`Due ${task.due_date || "soon"}`} />
-      <div className="flex flex-wrap gap-2">
-        <CopyButton label="Copy follow-up" value={prospect?.followup_message || ""} />
-        <ActionButton intent="markFollowupSent" prospectId={task.prospect_id || 0} label="Mark sent" icon={<Check size={16} />} primary />
-      </div>
-    </div>
-  );
-}
-
-function PendingTask({ prospect }: { prospect: Prospect }) {
-  return (
-    <div className="grid gap-3 rounded-lg border border-stone-200 bg-stone-50 p-3 md:grid-cols-[1fr_auto] md:items-center">
-      <TaskIntro icon={<Clock size={18} />} title={prospect.name} detail={`${outreachModeLabel(prospect)} · sent ${prospect.connection_sent_date || "today"} · watch acceptance`} />
-      <ActionButton intent="markAccepted" prospectId={prospect.id} label="Mark accepted" icon={<UserCheck size={16} />} primary />
-    </div>
-  );
-}
-
-function ProspectCard({ prospect }: { prospect: Prospect }) {
-  return (
-    <article className="rounded-lg border border-stone-300 bg-white p-5">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">{prospect.name}</h3>
-          <p className="mt-1 text-sm text-stone-600">{prospect.position}</p>
-          <a className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-teal-700 hover:text-teal-900" href={prospect.profile_url} target="_blank" rel="noreferrer">
-            LinkedIn profile
-            <ExternalLink size={14} />
-          </a>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Badge>{prospect.priority_tag}</Badge>
-          <Badge>Wave {prospect.wave || "-"}</Badge>
-          <Badge tone={prospect.outreach_mode === "no_note" ? "blue" : "green"}>{outreachModeLabel(prospect)}</Badge>
-          <Badge tone="blue">{prospect.status}</Badge>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <InfoBlock title="Brief" value={prospect.brief_topic || "No brief yet"} detail={prospect.preparation_notes || undefined} link={prospect.shared_url || undefined} />
-        <InfoBlock title="Rationale" value={prospect.rationale || prospect.notes || ""} />
-      </div>
-
-      <div className="mt-4 grid gap-3">
-        <MessageBlock title="Connection note" content={prospect.connection_message} />
-        <MessageBlock title={prospect.outreach_mode === "no_note" ? "First message after acceptance" : "Report message"} content={prospect.post_acceptance_message} />
-        <MessageBlock title="Follow-up" content={prospect.followup_message} />
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        {prospect.status === "connection_sent" ? <ActionButton intent="markAccepted" prospectId={prospect.id} label="Mark accepted" icon={<UserCheck size={16} />} primary /> : null}
-        {prospect.status === "to_contact" && prospect.contact_now ? <ActionButton intent="markConnectionSentWithNote" prospectId={prospect.id} label="Sent with note" icon={<Send size={16} />} primary /> : null}
-        {prospect.status === "to_contact" && prospect.contact_now ? <ActionButton intent="markConnectionSentWithoutNote" prospectId={prospect.id} label="Sent without note" icon={<UserCheck size={16} />} /> : null}
-        {prospect.connection_message ? <CopyButton label="Copy note" value={prospect.connection_message} /> : null}
-        {prospect.post_acceptance_message ? <CopyButton label="Copy message" value={prospect.post_acceptance_message} /> : null}
-        {prospect.status === "accepted" ? <ActionButton intent="markReportSent" prospectId={prospect.id} label="Mark sent" icon={<Check size={16} />} primary /> : null}
-        {prospect.followup_message ? <CopyButton label="Copy follow-up" value={prospect.followup_message} /> : null}
-        <ActionButton intent="saveForLater" prospectId={prospect.id} label="Save for later" icon={<Save size={16} />} />
-        <ActionButton intent="skip" prospectId={prospect.id} label="Skip" icon={<SkipForward size={16} />} danger />
-      </div>
-    </article>
-  );
-}
-
-function TaskIntro({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
+function TaskIntro({
+  icon,
+  title,
+  detail,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  detail: string;
+}) {
   return (
     <div className="flex gap-3">
-      <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-teal-50 text-teal-800">{icon}</div>
-      <div>
-        <p className="font-medium">{title}</p>
-        <p className="text-sm text-stone-600">{detail}</p>
+      <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <p className="truncate font-medium">{title}</p>
+        <p className="truncate text-sm text-muted-foreground">{detail}</p>
       </div>
     </div>
   );
-}
-
-function InfoBlock({ title, value, detail, link }: { title: string; value: string; detail?: string; link?: string }) {
-  return (
-    <div className="border-t border-stone-200 pt-3">
-      <p className="text-sm font-semibold">{title}</p>
-      <p className="mt-1 text-sm text-stone-700">{value}</p>
-      {detail ? <p className="mt-1 text-sm text-stone-500">{detail}</p> : null}
-      {link ? (
-        <a className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-teal-700" href={link} target="_blank" rel="noreferrer">
-          Shared brief <ExternalLink size={14} />
-        </a>
-      ) : null}
-    </div>
-  );
-}
-
-function MessageBlock({ title, content }: { title: string; content: string | null }) {
-  if (!content) return null;
-  return (
-    <div className="border-t border-stone-200 pt-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold">{title}</p>
-        <CopyButton label="Copy" value={content} compact />
-      </div>
-      <p className="mt-2 whitespace-pre-wrap rounded-md border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700">{content}</p>
-    </div>
-  );
-}
-
-function Badge({ children, tone = "green" }: { children: React.ReactNode; tone?: "green" | "blue" }) {
-  const className = tone === "blue" ? "bg-blue-50 text-blue-800" : "bg-teal-50 text-teal-800";
-  return <span className={`inline-flex min-h-6 items-center rounded-full px-2.5 text-xs font-semibold ${className}`}>{children}</span>;
 }
 
 function outreachModeLabel(prospect: Prospect) {
@@ -751,55 +873,56 @@ function ActionButton({
   prospectId,
   label,
   icon,
-  primary = false,
-  danger = false,
+  variant = "outline",
 }: {
   intent: string;
   prospectId: number;
   label: string;
   icon: React.ReactNode;
-  primary?: boolean;
-  danger?: boolean;
+  variant?: "default" | "outline" | "destructive" | "secondary";
 }) {
-  const className = primary
-    ? "border-teal-700 bg-teal-700 text-white hover:bg-teal-800"
-    : danger
-      ? "border-stone-300 bg-white text-red-700 hover:border-red-300"
-      : "border-stone-300 bg-white text-stone-800 hover:border-teal-700";
-
   return (
-    <FormShell>
+    <Form method="post">
       <input type="hidden" name="intent" value={intent} />
       <input type="hidden" name="prospectId" value={prospectId} />
-      <button className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium ${className}`}>
+      <Button type="submit" variant={variant} size="sm">
         {icon}
         {label}
-      </button>
-    </FormShell>
-  );
-}
-
-function CopyButton({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
-  return (
-    <button
-      type="button"
-      className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800 hover:border-teal-700 ${compact ? "min-h-8 px-2" : ""}`}
-      onClick={() => navigator.clipboard.writeText(value)}
-    >
-      <Clipboard size={16} />
-      {label}
-    </button>
-  );
-}
-
-function FormShell({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <Form method="post" className={className}>
-      {children}
+      </Button>
     </Form>
   );
 }
 
+function CopyButton({
+  label,
+  value,
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  compact?: boolean;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size={compact ? "sm" : "sm"}
+      onClick={() => {
+        navigator.clipboard.writeText(value);
+        toast.success("Copied to clipboard");
+      }}
+      className={cn(compact && "h-8 px-2")}
+    >
+      <Clipboard className="size-4" />
+      {label}
+    </Button>
+  );
+}
+
 function EmptyState() {
-  return <div className="rounded-lg border border-dashed border-stone-300 p-4 text-sm text-stone-500">Nothing here.</div>;
+  return (
+    <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+      Nothing here.
+    </div>
+  );
 }

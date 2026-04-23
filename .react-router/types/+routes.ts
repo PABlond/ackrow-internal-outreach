@@ -14,16 +14,18 @@ type Pages = {
   "/": {
     params: {};
   };
-  "/batch": {
+  "/prospects": {
     params: {};
   };
-  "/twitter": {
+  "/prospects/:id": {
+    params: {
+      "id": string;
+    };
+  };
+  "/import": {
     params: {};
   };
   "/discover": {
-    params: {};
-  };
-  "/search": {
     params: {};
   };
   "/api/extension/dashboard": {
@@ -35,37 +37,45 @@ type Pages = {
   "/api/extension/prospect": {
     params: {};
   };
-  "/prospects/:id": {
-    params: {
-      "id": string;
-    };
+  "/batch": {
+    params: {};
+  };
+  "/twitter": {
+    params: {};
+  };
+  "/search": {
+    params: {};
   };
 };
 
 type RouteFiles = {
   "root.tsx": {
     id: "root";
-    page: "/" | "/batch" | "/twitter" | "/discover" | "/search" | "/api/extension/dashboard" | "/api/extension/connection-status" | "/api/extension/prospect" | "/prospects/:id";
+    page: "/" | "/prospects" | "/prospects/:id" | "/import" | "/discover" | "/api/extension/dashboard" | "/api/extension/connection-status" | "/api/extension/prospect" | "/batch" | "/twitter" | "/search";
+  };
+  "routes/_app.tsx": {
+    id: "routes/_app";
+    page: "/" | "/prospects" | "/prospects/:id" | "/import" | "/discover";
   };
   "routes/home.tsx": {
     id: "routes/home";
     page: "/";
   };
-  "routes/batch.tsx": {
-    id: "routes/batch";
-    page: "/batch";
+  "routes/prospects._index.tsx": {
+    id: "routes/prospects._index";
+    page: "/prospects";
   };
-  "routes/twitter.tsx": {
-    id: "routes/twitter";
-    page: "/twitter";
+  "routes/prospect.$id.tsx": {
+    id: "routes/prospect.$id";
+    page: "/prospects/:id";
+  };
+  "routes/import.tsx": {
+    id: "routes/import";
+    page: "/import";
   };
   "routes/discover.tsx": {
     id: "routes/discover";
     page: "/discover";
-  };
-  "routes/search.tsx": {
-    id: "routes/search";
-    page: "/search";
   };
   "routes/api.extension.dashboard.ts": {
     id: "routes/api.extension.dashboard";
@@ -79,21 +89,32 @@ type RouteFiles = {
     id: "routes/api.extension.prospect";
     page: "/api/extension/prospect";
   };
-  "routes/prospect.$id.tsx": {
-    id: "routes/prospect.$id";
-    page: "/prospects/:id";
+  "routes/_redirects/batch.ts": {
+    id: "routes/_redirects/batch";
+    page: "/batch";
+  };
+  "routes/_redirects/twitter.ts": {
+    id: "routes/_redirects/twitter";
+    page: "/twitter";
+  };
+  "routes/_redirects/search.ts": {
+    id: "routes/_redirects/search";
+    page: "/search";
   };
 };
 
 type RouteModules = {
   "root": typeof import("./app/root.tsx");
+  "routes/_app": typeof import("./app/routes/_app.tsx");
   "routes/home": typeof import("./app/routes/home.tsx");
-  "routes/batch": typeof import("./app/routes/batch.tsx");
-  "routes/twitter": typeof import("./app/routes/twitter.tsx");
+  "routes/prospects._index": typeof import("./app/routes/prospects._index.tsx");
+  "routes/prospect.$id": typeof import("./app/routes/prospect.$id.tsx");
+  "routes/import": typeof import("./app/routes/import.tsx");
   "routes/discover": typeof import("./app/routes/discover.tsx");
-  "routes/search": typeof import("./app/routes/search.tsx");
   "routes/api.extension.dashboard": typeof import("./app/routes/api.extension.dashboard.ts");
   "routes/api.extension.connection-status": typeof import("./app/routes/api.extension.connection-status.ts");
   "routes/api.extension.prospect": typeof import("./app/routes/api.extension.prospect.ts");
-  "routes/prospect.$id": typeof import("./app/routes/prospect.$id.tsx");
+  "routes/_redirects/batch": typeof import("./app/routes/_redirects/batch.ts");
+  "routes/_redirects/twitter": typeof import("./app/routes/_redirects/twitter.ts");
+  "routes/_redirects/search": typeof import("./app/routes/_redirects/search.ts");
 };
