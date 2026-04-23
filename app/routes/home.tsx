@@ -17,8 +17,13 @@ import { toast } from "sonner";
 import type { Route } from "./+types/home";
 import {
   getDashboard,
+  requireWorkspace,
   runProspectAction,
+  type DashboardChannelBreakdown,
+  type DashboardFunnelStats,
+  type DashboardRateStats,
   type DashboardStatsPoint,
+  type DashboardTopicPerformance,
   type Prospect,
   type Task,
 } from "~/lib/outreach.server";
@@ -44,18 +49,20 @@ import { statusVariant } from "~/components/prospects/status-badge";
 import { cn } from "~/lib/utils";
 
 export const meta: Route.MetaFunction = () => [
-  { title: "Dashboard · Tempolis Outreach" },
-  { name: "description", content: "Internal Tempolis outreach tracker." },
+  { title: "Dashboard · Outreach" },
+  { name: "description", content: "Internal outreach tracker." },
 ];
 
-export async function loader() {
-  return await getDashboard();
+export async function loader({ params }: Route.LoaderArgs) {
+  const workspace = await requireWorkspace(params.workspaceSlug);
+  return await getDashboard(workspace);
 }
 
-export async function action({ request }: Route.ActionArgs) {
+export async function action({ request, params }: Route.ActionArgs) {
+  const workspace = await requireWorkspace(params.workspaceSlug);
   const formData = await request.formData();
-  await runProspectAction(formData);
-  return redirect("/");
+  await runProspectAction(formData, workspace.id);
+  return redirect(`/${workspace.slug}`);
 }
 
 export default function Home() {
@@ -84,26 +91,99 @@ export default function Home() {
           </div>
         </header>
 
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard label="Prospects" value={data.prospects.length} />
-          <MetricCard label="Pending connections" value={data.sections.pendingConnections.length} />
-          <MetricCard label="Reports to send" value={data.sections.acceptedReport.length} />
-          <MetricCard label="Active conversations" value={data.sections.conversationsActive.length} />
-        </section>
+        <section className="space-y-4">
+          <CollapsibleDashboardSection
+            storageKey="pipeline-now"
+            title="Pipeline now"
+            detail="Current workload for this workspace."
+            count={data.prospects.length}
+          >
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <KpiCard label="Prospects" value={data.prospects.length} />
+              <KpiCard label="Pending connections" value={data.sections.pendingConnections.length} />
+              <KpiCard label="Reports to send" value={data.sections.acceptedReport.length} />
+              <KpiCard label="Active conversations" value={data.sections.conversationsActive.length} />
+            </div>
+          </CollapsibleDashboardSection>
 
-        <section className="grid gap-4 lg:grid-cols-2">
-          <StatsChart
-            title="Messages sent"
-            detail="Last 7 days, across LinkedIn and Twitter/X."
-            points={data.stats.messagesSent7d}
-            totalLabel="total"
-          />
-          <StatsChart
-            title="Prospect base"
-            detail="Total prospects in CRM over the last 7 days."
-            points={data.stats.prospects7d}
-            totalLabel="today"
-          />
+          <CollapsibleDashboardSection
+            storageKey="process-health"
+            title="Process health"
+            detail="Anything that can break the outreach rhythm."
+            count={data.stats.processHealth.followupsOverdue + data.stats.processHealth.acceptedWithoutReport + data.stats.processHealth.pendingChecksDue}
+          >
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <KpiCard label="Follow-ups overdue" value={data.stats.processHealth.followupsOverdue} tone={data.stats.processHealth.followupsOverdue ? "warning" : "normal"} />
+              <KpiCard label="Oldest overdue" value={data.stats.processHealth.oldestOverdueDays === null ? "-" : `${data.stats.processHealth.oldestOverdueDays}d`} tone={data.stats.processHealth.oldestOverdueDays ? "warning" : "normal"} />
+              <KpiCard label="Accepted waiting report" value={data.stats.processHealth.acceptedWithoutReport} tone={data.stats.processHealth.acceptedWithoutReport ? "warning" : "normal"} />
+              <KpiCard label="Pending checks due" value={data.stats.processHealth.pendingChecksDue} tone={data.stats.processHealth.pendingChecksDue ? "warning" : "normal"} />
+            </div>
+          </CollapsibleDashboardSection>
+
+          <CollapsibleDashboardSection
+            storageKey="volume-charts"
+            title="Volume"
+            detail="Messages sent and total prospect base."
+            count={data.stats.messagesSent7d.reduce((sum, point) => sum + point.value, 0)}
+          >
+            <div className="grid gap-4 lg:grid-cols-2">
+              <StatsChart
+                title="Messages sent"
+                detail="Last 7 days, across LinkedIn and Twitter/X."
+                points={data.stats.messagesSent7d}
+                totalLabel="total"
+              />
+              <StatsChart
+                title="Prospect base"
+                detail="Total prospects in CRM over the last 7 days."
+                points={data.stats.prospects7d}
+                totalLabel="today"
+              />
+            </div>
+          </CollapsibleDashboardSection>
+
+          <CollapsibleDashboardSection
+            storageKey="funnel"
+            title="Funnel"
+            detail="Added, contacted, accepted, replied and active conversations."
+            count={data.stats.funnel7d.firstTouchesSent}
+          >
+            <FunnelPanel funnel7d={data.stats.funnel7d} funnel30d={data.stats.funnel30d} />
+          </CollapsibleDashboardSection>
+
+          <CollapsibleDashboardSection
+            storageKey="conversion-rates"
+            title="Conversion rates"
+            detail="7-day and 30-day conversion health."
+            count={data.stats.rates7d.repliesReceived}
+          >
+            <div className="grid gap-3 md:grid-cols-3">
+              <RateCard title="LinkedIn accept rate" rate7d={data.stats.rates7d.linkedinAcceptRate} rate30d={data.stats.rates30d.linkedinAcceptRate} denominator={`${data.stats.rates7d.linkedinConnectionsSent} sent 7d · ${data.stats.rates30d.linkedinConnectionsSent} sent 30d`} />
+              <RateCard title="Reply rate" rate7d={data.stats.rates7d.replyRate} rate30d={data.stats.rates30d.replyRate} denominator={`${data.stats.rates7d.firstMessagesSent} first messages 7d · ${data.stats.rates30d.firstMessagesSent} first messages 30d`} />
+              <RateCard title="Active conversation rate" rate7d={data.stats.rates7d.activeConversationRate} rate30d={data.stats.rates30d.activeConversationRate} denominator={`${data.stats.rates7d.repliesReceived} replies 7d · ${data.stats.rates30d.repliesReceived} replies 30d`} />
+            </div>
+          </CollapsibleDashboardSection>
+
+          <CollapsibleDashboardSection
+            storageKey="channel-performance"
+            title="Channel performance"
+            detail="LinkedIn vs Twitter/X over the last 30 days."
+            count={data.stats.channelBreakdown.reduce((sum, row) => sum + row.firstTouches, 0)}
+          >
+            <ChannelPerformanceTable rows={data.stats.channelBreakdown} />
+          </CollapsibleDashboardSection>
+
+          <CollapsibleDashboardSection
+            storageKey="learning"
+            title="Learning"
+            detail="Import quality and brief topics that are getting signal."
+            count={data.stats.topicPerformance.length}
+          >
+            <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+              <ImportQualityPanel quality={data.stats.importQuality} />
+              <TopicPerformanceTable rows={data.stats.topicPerformance} />
+            </div>
+          </CollapsibleDashboardSection>
         </section>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -309,7 +389,7 @@ function ProspectsInProgressPanel({ prospects }: { prospects: Prospect[] }) {
 function DashboardTaskLink({ prospect, detail }: { prospect: Prospect; detail: string }) {
   return (
     <div className="grid gap-2 rounded-lg border bg-muted/30 p-3 transition-colors hover:border-primary md:grid-cols-[1fr_auto] md:items-center">
-      <Link to={`/prospects/${prospect.id}`} className="block">
+      <Link to={prospectPath(prospect)} className="block">
         <TaskIntro icon={<Clock size={18} />} title={prospect.name} detail={detail} />
       </Link>
       <div className="flex flex-wrap items-center gap-2">
@@ -462,7 +542,7 @@ function TodoItemRow({ item }: { item: TodoItem }) {
   return (
     <Card>
       <CardContent className="grid gap-3 p-4 md:grid-cols-[1fr_auto] md:items-center">
-        <Link to={item.prospect ? `/prospects/${item.prospect.id}` : "/"} className="block">
+        <Link to={item.prospect ? prospectPath(item.prospect) : "/tempolis"} className="block">
           <TaskIntro icon={icon} title={item.title} detail={item.detail} />
         </Link>
         <div className="flex flex-wrap gap-2">
@@ -538,7 +618,7 @@ function TodoItemRow({ item }: { item: TodoItem }) {
           ) : null}
           {item.kind === "brief" && item.prospect ? (
             <Button asChild variant="outline" size="sm">
-              <Link to={`/prospects/${item.prospect.id}`}>
+              <Link to={prospectPath(item.prospect)}>
                 <LinkIcon className="size-4" />
                 Add URL
               </Link>
@@ -672,7 +752,7 @@ function ProspectsTable({ prospects }: { prospects: Prospect[] }) {
             <TableRow key={prospect.id}>
               <TableCell>
                 <Link
-                  to={`/prospects/${prospect.id}`}
+                  to={prospectPath(prospect)}
                   className="font-medium text-foreground hover:text-primary"
                 >
                   {prospect.name}
@@ -712,12 +792,259 @@ function nextActionLabel(prospect: Prospect) {
   return "Review";
 }
 
-function MetricCard({ label, value }: { label: string; value: number }) {
+function CollapsibleDashboardSection({
+  storageKey,
+  title,
+  detail,
+  count,
+  children,
+}: {
+  storageKey: string;
+  title: string;
+  detail: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  const key = `outreach.dashboard.kpi.${storageKey}`;
+  const [value, setValue] = useState("item");
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(key);
+    if (saved === "closed") setValue("");
+    if (saved === "open") setValue("item");
+  }, [key]);
+
   return (
-    <Card>
+    <Accordion
+      type="single"
+      collapsible
+      value={value}
+      onValueChange={(next) => {
+        setValue(next);
+        window.localStorage.setItem(key, next ? "open" : "closed");
+      }}
+    >
+      <AccordionItem value="item" className="overflow-hidden rounded-lg border bg-card">
+        <AccordionTrigger className="px-5 py-4 hover:no-underline">
+          <div className="flex w-full flex-col gap-1 text-left sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+              <p className="mt-1 text-sm font-normal text-muted-foreground">{detail}</p>
+            </div>
+            <Badge variant={count ? "info" : "muted"}>{count}</Badge>
+          </div>
+        </AccordionTrigger>
+        <AccordionContent className="px-5 pb-5 pt-0">{children}</AccordionContent>
+      </AccordionItem>
+    </Accordion>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  tone = "normal",
+}: {
+  label: string;
+  value: number | string;
+  tone?: "normal" | "warning";
+}) {
+  return (
+    <Card className={cn(tone === "warning" && "border-amber-500/50")}>
       <CardContent className="p-5">
         <p className="text-sm text-muted-foreground">{label}</p>
         <p className="mt-1 text-3xl font-semibold tracking-tight">{value}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RateCard({
+  title,
+  rate7d,
+  rate30d,
+  denominator,
+}: {
+  title: string;
+  rate7d: number | null;
+  rate30d: number | null;
+  denominator: string;
+}) {
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <p className="text-sm text-muted-foreground">{title}</p>
+        <div className="mt-3 flex items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase text-muted-foreground">7d</p>
+            <p className="text-3xl font-semibold tracking-tight">{formatRate(rate7d)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs font-semibold uppercase text-muted-foreground">30d</p>
+            <p className="text-2xl font-semibold tracking-tight">{formatRate(rate30d)}</p>
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">{denominator}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function FunnelPanel({
+  funnel7d,
+  funnel30d,
+}: {
+  funnel7d: DashboardFunnelStats;
+  funnel30d: DashboardFunnelStats;
+}) {
+  const [window, setWindow] = useState<"7d" | "30d">("7d");
+  const funnel = window === "7d" ? funnel7d : funnel30d;
+  const steps = [
+    ["Added", funnel.prospectsAdded],
+    ["First touch", funnel.firstTouchesSent],
+    ["Accepted", funnel.linkedinAccepted],
+    ["Report sent", funnel.reportsSent],
+    ["Replied", funnel.repliesReceived],
+    ["Active conversation", funnel.activeConversations],
+  ] as const;
+  const max = Math.max(1, ...steps.map(([, value]) => value));
+
+  return (
+    <div className="space-y-4">
+      <div className="inline-flex rounded-md border bg-muted/40 p-1">
+        {(["7d", "30d"] as const).map((item) => (
+          <button
+            key={item}
+            type="button"
+            onClick={() => setWindow(item)}
+            className={cn(
+              "rounded-sm px-3 py-1 text-sm font-medium",
+              window === item ? "bg-background shadow-sm" : "text-muted-foreground",
+            )}
+          >
+            {item}
+          </button>
+        ))}
+      </div>
+      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        {steps.map(([label, value]) => (
+          <Card key={label}>
+            <CardContent className="p-4">
+              <p className="text-sm text-muted-foreground">{label}</p>
+              <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
+              <div className="mt-3 h-2 rounded-full bg-muted">
+                <div
+                  className="h-2 rounded-full bg-primary"
+                  style={{ width: `${Math.max(4, Math.round((value / max) * 100))}%` }}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChannelPerformanceTable({ rows }: { rows: DashboardChannelBreakdown[] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Channel</TableHead>
+          <TableHead>Prospects</TableHead>
+          <TableHead>First touches</TableHead>
+          <TableHead>Replies</TableHead>
+          <TableHead>Conversations</TableHead>
+          <TableHead>Reply rate</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((row) => (
+          <TableRow key={row.channel}>
+            <TableCell className="font-medium">{row.channel === "twitter" ? "Twitter/X" : "LinkedIn"}</TableCell>
+            <TableCell>{row.prospects}</TableCell>
+            <TableCell>{row.firstTouches}</TableCell>
+            <TableCell>{row.replies}</TableCell>
+            <TableCell>{row.activeConversations}</TableCell>
+            <TableCell>{formatRate(row.replyRate)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function ImportQualityPanel({ quality }: { quality: DashboardData["stats"]["importQuality"] }) {
+  const rows = [
+    ["LEARN", quality.learn],
+    ["WARM", quality.warm],
+    ["SAVE", quality.save],
+    ["SKIP", quality.skip],
+  ] as const;
+  const total = rows.reduce((sum, [, value]) => sum + value, 0);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Import quality</CardTitle>
+        <p className="text-sm text-muted-foreground">{formatRate(quality.learnRate)} LEARN rate</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <div className="mb-1 flex items-center justify-between text-sm">
+              <span>{label}</span>
+              <span className="font-medium">{value}</span>
+            </div>
+            <div className="h-2 rounded-full bg-muted">
+              <div
+                className="h-2 rounded-full bg-primary"
+                style={{ width: total ? `${Math.round((value / total) * 100)}%` : "0%" }}
+              />
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function TopicPerformanceTable({ rows }: { rows: DashboardTopicPerformance[] }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Top brief topics</CardTitle>
+        <p className="text-sm text-muted-foreground">Last 30 days for outreach/replies, current status for conversations.</p>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Topic</TableHead>
+              <TableHead>Prospects</TableHead>
+              <TableHead>First touches</TableHead>
+              <TableHead>Replies</TableHead>
+              <TableHead>Conversations</TableHead>
+              <TableHead>Reply rate</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length ? rows.map((row) => (
+              <TableRow key={row.topic}>
+                <TableCell className="font-medium">{row.topic}</TableCell>
+                <TableCell>{row.prospects}</TableCell>
+                <TableCell>{row.firstTouches}</TableCell>
+                <TableCell>{row.replies}</TableCell>
+                <TableCell>{row.activeConversations}</TableCell>
+                <TableCell>{formatRate(row.replyRate)}</TableCell>
+              </TableRow>
+            )) : (
+              <TableRow>
+                <TableCell colSpan={6} className="text-muted-foreground">No topics yet.</TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </CardContent>
     </Card>
   );
@@ -777,6 +1104,11 @@ function StatsChart({
       </CardContent>
     </Card>
   );
+}
+
+function formatRate(value: number | null) {
+  if (value === null) return "-";
+  return `${Math.round(value * 100)}%`;
 }
 
 function SectionTitle({ title, detail }: { title: string; detail: string }) {
@@ -866,6 +1198,10 @@ function outreachModeLabel(prospect: Prospect) {
   if (prospect.source_channel === "twitter") return "Twitter/X";
   if (prospect.status === "to_contact") return "note optional";
   return prospect.outreach_mode === "no_note" ? "no note" : "with note";
+}
+
+function prospectPath(prospect: Prospect) {
+  return `/${prospect.workspace_slug || "tempolis"}/prospects/${prospect.id}`;
 }
 
 function ActionButton({

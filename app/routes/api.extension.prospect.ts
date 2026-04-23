@@ -2,7 +2,13 @@ import { data, redirect } from "react-router";
 
 import type { Route } from "./+types/api.extension.prospect";
 import { analyzeProspectTable, analyzeTwitterProspectTable, prospectEvidenceToTable } from "~/lib/batch.server";
-import { findProspectByProfileUrl, importAnalyzedProspects, setProspectOutreachPreference } from "~/lib/outreach.server";
+import {
+  findProspectByProfileUrl,
+  getWorkspaceBySlug,
+  importAnalyzedProspects,
+  setProspectOutreachPreference,
+  type Workspace,
+} from "~/lib/outreach.server";
 
 type ExtensionPayload = {
   name?: string;
@@ -20,55 +26,57 @@ type ExtensionPayload = {
   twitterHandle?: string;
   twitterUrl?: string;
   open?: boolean;
+  workspaceSlug?: string;
 };
 
 export async function action({ request }: Route.ActionArgs) {
   if (request.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders() });
+    return new Response(null, { status: 204, headers: corsHeaders(request) });
   }
 
   if (request.method !== "POST") {
-    return data({ ok: false, error: "Method not allowed" }, { status: 405, headers: corsHeaders() });
+    return data({ ok: false, error: "Method not allowed" }, { status: 405, headers: corsHeaders(request) });
   }
 
   const payload = await readPayload(request);
+  const workspace = await workspaceFromPayload(payload, request);
   if (payload.sourceChannel === "twitter") {
-    return handleTwitterPayload(payload);
+    return handleTwitterPayload(payload, workspace, request);
   }
 
   const profileUrl = normalizeLinkedInUrl(String(payload.profileUrl || ""));
   if (!profileUrl.includes("linkedin.com/in/")) {
-    return data({ ok: false, error: "Open a LinkedIn profile page first." }, { status: 400, headers: corsHeaders() });
+    return data({ ok: false, error: "Open a LinkedIn profile page first." }, { status: 400, headers: corsHeaders(request) });
   }
 
-  const existingId = await findProspectByProfileUrl(profileUrl);
+  const existingId = await findProspectByProfileUrl(profileUrl, workspace.id);
   if (existingId) {
     await setProspectOutreachPreference(existingId, normalizeOutreachMode(payload.outreachMode));
-    return respond(payload, existingId, true);
+    return respond(payload, existingId, true, workspace, request);
   }
 
   const table = prospectEvidenceToTable({ ...payload, profileUrl });
-  const analysis = await analyzeProspectTable(table);
-  await importAnalyzedProspects(analysis.prospects);
-  const id = await findProspectByProfileUrl(profileUrl);
+  const analysis = await analyzeProspectTable(table, workspace);
+  await importAnalyzedProspects(analysis.prospects, workspace.id);
+  const id = await findProspectByProfileUrl(profileUrl, workspace.id);
 
   if (!id) {
-    return data({ ok: false, error: "Profile analyzed but not found after import." }, { status: 500, headers: corsHeaders() });
+    return data({ ok: false, error: "Profile analyzed but not found after import." }, { status: 500, headers: corsHeaders(request) });
   }
 
   await setProspectOutreachPreference(id, normalizeOutreachMode(payload.outreachMode));
-  return respond(payload, id, false);
+  return respond(payload, id, false, workspace, request);
 }
 
-async function handleTwitterPayload(payload: ExtensionPayload) {
+async function handleTwitterPayload(payload: ExtensionPayload, workspace: Workspace, request: Request) {
   const profileUrl = normalizeTwitterUrl(String(payload.profileUrl || payload.twitterUrl || payload.twitterHandle || ""));
   if (!profileUrl.includes("x.com/") && !profileUrl.includes("twitter.com/")) {
-    return data({ ok: false, error: "Open a Twitter/X profile page first." }, { status: 400, headers: corsHeaders() });
+    return data({ ok: false, error: "Open a Twitter/X profile page first." }, { status: 400, headers: corsHeaders(request) });
   }
 
-  const existingId = await findProspectByProfileUrl(profileUrl);
+  const existingId = await findProspectByProfileUrl(profileUrl, workspace.id);
   if (existingId) {
-    return respond(payload, existingId, true);
+    return respond(payload, existingId, true, workspace, request);
   }
 
   const table = prospectEvidenceToTable({
@@ -80,20 +88,36 @@ async function handleTwitterPayload(payload: ExtensionPayload) {
       payload.rawText ? `Visible page text: ${payload.rawText}` : "",
     ].filter(Boolean).join("\n\n"),
   });
-  const analysis = await analyzeTwitterProspectTable(table);
-  await importAnalyzedProspects(analysis.prospects);
-  const id = await findProspectByProfileUrl(profileUrl);
+  const analysis = await analyzeTwitterProspectTable(table, workspace);
+  await importAnalyzedProspects(analysis.prospects, workspace.id);
+  const id = await findProspectByProfileUrl(profileUrl, workspace.id);
 
   if (!id) {
-    return data({ ok: false, error: "Twitter/X profile analyzed but not found after import." }, { status: 500, headers: corsHeaders() });
+    return data({ ok: false, error: "Twitter/X profile analyzed but not found after import." }, { status: 500, headers: corsHeaders(request) });
   }
 
-  return respond(payload, id, false);
+  return respond(payload, id, false, workspace, request);
 }
 
-function respond(payload: ExtensionPayload, id: number, existing: boolean) {
-  if (payload.open) return redirect(`/prospects/${id}`);
-  return data({ ok: true, id, existing, url: `http://localhost:4377/prospects/${id}` }, { headers: corsHeaders() });
+async function workspaceFromPayload(payload: ExtensionPayload, request: Request) {
+  if (payload.workspaceSlug) {
+    const workspace = await getWorkspaceBySlug(payload.workspaceSlug);
+    if (workspace) return workspace;
+  }
+  const querySlug = new URL(request.url).searchParams.get("workspaceSlug");
+  if (querySlug) {
+    const workspace = await getWorkspaceBySlug(querySlug);
+    if (workspace) return workspace;
+  }
+  const fallback = await getWorkspaceBySlug("tempolis");
+  if (!fallback) throw new Error("Default workspace is missing.");
+  return fallback;
+}
+
+function respond(payload: ExtensionPayload, id: number, existing: boolean, workspace: Workspace, request: Request) {
+  const path = `/${workspace.slug}/prospects/${id}`;
+  if (payload.open) return redirect(path);
+  return data({ ok: true, id, existing, url: `http://localhost:4377${path}` }, { headers: corsHeaders(request) });
 }
 
 function normalizeLinkedInUrl(value: string) {
@@ -113,11 +137,13 @@ function normalizeOutreachMode(value: unknown): "with_note" | "no_note" {
   return value === "with_note" ? "with_note" : "no_note";
 }
 
-function corsHeaders() {
+function corsHeaders(request: Request) {
+  const origin = request.headers.get("origin") || "*";
   return {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Credentials": "true",
   };
 }
 

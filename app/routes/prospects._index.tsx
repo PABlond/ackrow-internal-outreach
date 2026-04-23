@@ -2,7 +2,7 @@ import { Link, useLoaderData, useSearchParams } from "react-router";
 import { ExternalLink, Search } from "lucide-react";
 
 import type { Route } from "./+types/prospects._index";
-import { getDashboard, type Prospect } from "~/lib/outreach.server";
+import { getDashboard, requireWorkspace, type Prospect } from "~/lib/outreach.server";
 import { Badge } from "~/components/ui/badge";
 import { Card, CardContent } from "~/components/ui/card";
 import { Input } from "~/components/ui/input";
@@ -39,12 +39,13 @@ const statuses = [
 ];
 
 export const meta: Route.MetaFunction = () => [
-  { title: "Prospects · Tempolis Outreach" },
+  { title: "Prospects · Outreach" },
   { name: "description", content: "Browse and filter prospects stored in the outreach CRM." },
 ];
 
-export async function loader() {
-  return await getDashboard();
+export async function loader({ params }: Route.LoaderArgs) {
+  const workspace = await requireWorkspace(params.workspaceSlug);
+  return await getDashboard(workspace);
 }
 
 export default function ProspectsIndex() {
@@ -136,7 +137,7 @@ export default function ProspectsIndex() {
                   <TableRow key={prospect.id}>
                     <TableCell className="max-w-md">
                       <Link
-                        to={`/prospects/${prospect.id}`}
+                        to={`/${data.workspace.slug}/prospects/${prospect.id}`}
                         className="font-medium text-foreground hover:text-primary"
                       >
                         {prospect.name}

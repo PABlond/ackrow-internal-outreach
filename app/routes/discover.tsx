@@ -1,3 +1,4 @@
+import { Link, useParams } from "react-router";
 import { Copy, ExternalLink, Search } from "lucide-react";
 import { toast } from "sonner";
 
@@ -17,7 +18,27 @@ type SearchQuery = {
   query: string;
 };
 
-const groups: SearchGroup[] = [
+type DiscoverConfig = {
+  productName: string;
+  headline: string;
+  description: string;
+  importSource: "linkedin" | "x";
+  steps: string[];
+  groups: SearchGroup[];
+};
+
+const tempolisConfig: DiscoverConfig = {
+  productName: "Tempolis",
+  headline: "Discover public affairs prospects",
+  description:
+    "Google-powered LinkedIn prospecting queries for EU public affairs, policy, comms and analysis profiles. Open a search, shortlist profiles, then import them.",
+  importSource: "linkedin",
+  steps: [
+    "Start with operational first-wave searches in EU public affairs, policy comms, consultants and analysts.",
+    "Avoid very senior premium targets until copy and brief format are calibrated.",
+    "Import promising profiles so the app classifies them and writes the outreach sequence.",
+  ],
+  groups: [
   {
     title: "EU public affairs",
     description: "Good first-wave LEARN profiles: consultants, advisors, managers around EU affairs and Brussels.",
@@ -174,28 +195,177 @@ const groups: SearchGroup[] = [
       },
     ],
   },
-];
+  ],
+};
+
+const narralensConfig: DiscoverConfig = {
+  productName: "Narralens",
+  headline: "Discover brand, social and PR prospects",
+  description:
+    "Find people who can test Narralens on a real brand, campaign, launch or competitor. Prioritize workflow pain over audience size.",
+  importSource: "linkedin",
+  steps: [
+    "Start with brand, social, PR and agency people who produce campaign readouts, client updates or launch monitoring.",
+    "Look for visible moments: launches, campaigns, repositioning, backlash, competitor tracking or reporting workflows.",
+    "Import profiles with a concrete test topic, so outreach can ask for feedback on one real brief instead of pitching a tool.",
+  ],
+  groups: [
+    {
+      title: "Brand and social teams",
+      description:
+        "Best first-wave ICP: people responsible for reading public conversation and turning it into decisions or updates.",
+      queries: [
+        {
+          label: "Brand managers",
+          intent: "In-house people likely to care about perception around campaigns, launches and competitors.",
+          query: 'site:linkedin.com/in ("brand manager" OR "brand lead" OR "brand strategist") ("campaign" OR "launch" OR "consumer insights" OR "brand tracking")',
+        },
+        {
+          label: "Social media leads",
+          intent: "High workflow fit: they already monitor conversation and need fast summaries.",
+          query: 'site:linkedin.com/in ("social media manager" OR "social media lead" OR "head of social") ("brand" OR "campaign" OR "community" OR "insights")',
+        },
+        {
+          label: "Comms managers",
+          intent: "Useful for reputation, narrative shifts and stakeholder-ready briefs.",
+          query: 'site:linkedin.com/in ("communications manager" OR "comms lead" OR "corporate communications") ("brand" OR reputation OR campaign OR launch)',
+        },
+        {
+          label: "Product marketers",
+          intent: "Good wedge around launches, positioning and competitor perception.",
+          query: 'site:linkedin.com/in ("product marketing manager" OR "product marketer" OR "GTM") ("launch" OR positioning OR competitor OR messaging)',
+        },
+      ],
+    },
+    {
+      title: "PR and agencies",
+      description:
+        "Agencies can test across multiple clients and immediately understand the value of a shareable perception brief.",
+      queries: [
+        {
+          label: "PR account leads",
+          intent: "Client-facing profiles who need quick narrative readouts and issue context.",
+          query: 'site:linkedin.com/in ("PR account director" OR "PR account manager" OR "communications consultant") ("client" OR campaign OR reputation OR media)',
+        },
+        {
+          label: "Agency strategists",
+          intent: "Strategists are likely to test brand vs competitor, launch perception and campaign narratives.",
+          query: 'site:linkedin.com/in ("agency strategist" OR "strategy director" OR "brand strategist") ("social listening" OR insights OR campaign OR client)',
+        },
+        {
+          label: "Social agencies",
+          intent: "Teams with recurring monitoring/reporting pain but not always heavy tooling.",
+          query: 'site:linkedin.com/in ("social media agency" OR "social strategist" OR "community strategist") ("reports" OR insights OR monitoring OR campaigns)',
+        },
+        {
+          label: "Founder-led agencies",
+          intent: "Small agency operators may adopt faster if the brief saves time before client updates.",
+          query: 'site:linkedin.com/in ("agency founder" OR "founder" OR "managing director") ("PR agency" OR "social agency" OR "brand agency")',
+        },
+      ],
+    },
+    {
+      title: "Need signals",
+      description:
+        "Search for people already talking about monitoring, perception, reporting, launches or social listening alternatives.",
+      queries: [
+        {
+          label: "Social listening pain",
+          intent: "People discussing heavy dashboards, reporting gaps or signal quality.",
+          query: 'site:linkedin.com/posts ("social listening" OR "brand monitoring") ("dashboard" OR "reporting" OR "insights" OR "too much noise")',
+        },
+        {
+          label: "Campaign reporting",
+          intent: "Profiles posting about campaign wrap-ups, performance reports or narrative learnings.",
+          query: 'site:linkedin.com/posts ("campaign report" OR "campaign learnings" OR "brand campaign") ("insights" OR "social" OR "PR" OR "marketing")',
+        },
+        {
+          label: "Launch monitoring",
+          intent: "Good hook for a first test: run Narralens on a launch they know.",
+          query: 'site:linkedin.com/posts ("product launch" OR "launch campaign") ("social" OR "brand" OR "PR" OR "community")',
+        },
+        {
+          label: "Competitor tracking",
+          intent: "Strong use case for brand and product marketing teams.",
+          query: 'site:linkedin.com/posts ("competitor analysis" OR "competitive intelligence" OR "brand tracking") ("marketing" OR "brand" OR "positioning")',
+        },
+      ],
+    },
+    {
+      title: "Founder launch wedge",
+      description:
+        "Secondary ICP: founders with visible launches who can give fast feedback on whether the brief helps.",
+      queries: [
+        {
+          label: "Recent launch founders",
+          intent: "Useful for direct product feedback around launch perception.",
+          query: 'site:linkedin.com/in (founder OR cofounder) ("launched" OR "launching" OR "Product Hunt" OR "waitlist") ("brand" OR "SaaS" OR "consumer")',
+        },
+        {
+          label: "Indie builders with distribution",
+          intent: "Only worth it if they have an active launch or visible audience need.",
+          query: 'site:linkedin.com/in ("indie hacker" OR "builder" OR "founder") ("launch" OR "audience" OR "growth" OR "community")',
+        },
+        {
+          label: "Startup marketers",
+          intent: "Small teams where one person owns launch, social, positioning and reporting.",
+          query: 'site:linkedin.com/in ("startup marketer" OR "growth marketer" OR "marketing lead") ("launch" OR "brand" OR "community" OR "social")',
+        },
+      ],
+    },
+    {
+      title: "X / Twitter discovery",
+      description:
+        "Google-indexed X profiles and posts. Use this for lighter DM/reply outreach, not LinkedIn-style connection flows.",
+      queries: [
+        {
+          label: "Marketing people on X",
+          intent: "Find profiles likely to reply to short product-testing DMs.",
+          query: 'site:x.com ("brand strategist" OR "social media manager" OR "growth marketer") ("launch" OR "campaign" OR "positioning")',
+        },
+        {
+          label: "Agency operators on X",
+          intent: "Good for finding people who talk publicly about client work and workflows.",
+          query: 'site:x.com ("agency founder" OR "brand strategist" OR "PR" OR "social strategy") ("clients" OR "campaigns" OR "reports")',
+        },
+        {
+          label: "Live perception topics",
+          intent: "Find posts where a contextual reply about a perception brief could make sense.",
+          query: 'site:x.com ("brand perception" OR "campaign backlash" OR "social listening" OR "launch feedback")',
+        },
+      ],
+    },
+  ],
+};
+
+const configs: Record<string, DiscoverConfig> = {
+  tempolis: tempolisConfig,
+  narralens: narralensConfig,
+};
 
 export const meta: Route.MetaFunction = () => [
-  { title: "Discover · Tempolis Outreach" },
-  { name: "description", content: "Google search launcher for Tempolis outreach prospecting." },
+  { title: "Discover · Outreach" },
+  { name: "description", content: "Google search launcher for outreach prospecting." },
 ];
 
 export default function DiscoverPage() {
+  const params = useParams();
+  const workspaceSlug = params.workspaceSlug || "tempolis";
+  const config = configs[workspaceSlug] || tempolisConfig;
+
   return (
     <div className="px-6 py-8">
       <div className="mx-auto max-w-7xl space-y-8">
         <header className="flex flex-col gap-4 border-b pb-6 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-primary">Prospecting</p>
-            <h1 className="mt-1 text-3xl font-semibold tracking-tight">Discover prospects</h1>
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight">{config.headline}</h1>
             <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-              Google-powered LinkedIn prospecting queries based on the Tempolis outreach playbook. Open a search,
-              shortlist profiles, then import them.
+              {config.description}
             </p>
           </div>
           <Button asChild>
-            <a href="/import?source=linkedin">Add shortlisted prospects</a>
+            <Link to={`/${workspaceSlug}/import?source=${config.importSource}`}>Add shortlisted prospects</Link>
           </Button>
         </header>
 
@@ -205,15 +375,15 @@ export default function DiscoverPage() {
           </CardHeader>
           <CardContent>
             <ol className="grid gap-2 text-sm text-muted-foreground md:grid-cols-3">
-              <li>1. Start with first-wave searches in EU public affairs or issue-led categories.</li>
-              <li>2. Open several Google tabs, shortlist public LinkedIn profiles, and avoid premium targets too early.</li>
-              <li>3. Add promising profiles in Import so the app classifies and writes outreach copy.</li>
+              {config.steps.map((step, index) => (
+                <li key={step}>{index + 1}. {step}</li>
+              ))}
             </ol>
           </CardContent>
         </Card>
 
         <div className="grid gap-6">
-          {groups.map((group) => (
+          {config.groups.map((group) => (
             <section key={group.title} className="space-y-3">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                 <div>

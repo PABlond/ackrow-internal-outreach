@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import type { Route } from "./+types/prospect.$id";
 import {
   getProspectDetail,
+  requireWorkspace,
   runProspectAction,
   type Prospect,
   type Reply,
@@ -42,12 +43,13 @@ import { cn } from "~/lib/utils";
 
 export const meta: Route.MetaFunction = ({ data }) => {
   const name = data?.detail?.prospect?.name || "Prospect";
-  return [{ title: `${name} · Tempolis Outreach` }];
+  return [{ title: `${name} · Outreach` }];
 };
 
 export async function loader({ params }: Route.LoaderArgs) {
   const id = Number(params.id);
-  const detail = await getProspectDetail(id);
+  const workspace = await requireWorkspace(params.workspaceSlug);
+  const detail = await getProspectDetail(id, workspace.id);
   if (!detail) {
     throw new Response("Prospect not found", { status: 404 });
   }
@@ -55,12 +57,13 @@ export async function loader({ params }: Route.LoaderArgs) {
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
+  const workspace = await requireWorkspace(params.workspaceSlug);
   const formData = await request.formData();
-  await runProspectAction(formData);
+  await runProspectAction(formData, workspace.id);
   if (String(formData.get("intent") || "") === "deleteProspect") {
-    return redirect("/");
+    return redirect(`/${workspace.slug}`);
   }
-  return redirect(`/prospects/${params.id}`);
+  return redirect(`/${workspace.slug}/prospects/${params.id}`);
 }
 
 export default function ProspectDetail() {
@@ -89,7 +92,7 @@ export default function ProspectDetail() {
         <header className="flex flex-col gap-4 border-b pb-6 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0">
             <Button asChild variant="ghost" size="sm" className="-ml-3">
-              <Link to="/">
+              <Link to={`/${prospect.workspace_slug || "tempolis"}`}>
                 <ArrowLeft className="size-4" />
                 Dashboard
               </Link>
@@ -107,6 +110,7 @@ export default function ProspectDetail() {
             </a>
           </div>
           <div className="flex flex-wrap items-start gap-2">
+            <Badge variant="muted">{prospect.workspace_name || "Workspace"}</Badge>
             {prospect.priority_tag ? (
               <Badge variant="muted">{prospect.priority_tag}</Badge>
             ) : null}
@@ -321,7 +325,7 @@ export default function ProspectDetail() {
               <CardHeader>
                 <CardTitle>Reply handling</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  If Marc replies, paste it here and answer instead of following up.
+                  If this prospect replies, paste it here and answer instead of following up.
                 </p>
               </CardHeader>
               <CardContent>
@@ -706,17 +710,26 @@ function ReplyPanel({ prospect, replies }: { prospect: Prospect; replies: Reply[
           />
         </div>
         <div className="mt-3 space-y-2">
+          <Label htmlFor="responseDirection">Response direction</Label>
+          <Textarea
+            id="responseDirection"
+            name="responseDirection"
+            rows={3}
+            placeholder="Optional. Example: thank them, clarify this is early, ask what signal would make it useful for their team..."
+          />
+        </div>
+        <div className="mt-3 space-y-2">
           <Label htmlFor="suggestedResponse">Draft response</Label>
           <Textarea
             id="suggestedResponse"
             name="suggestedResponse"
             rows={4}
-            placeholder="Optional. Leave empty and the app will create a lightweight fallback."
+            placeholder="Optional manual override. Leave empty and the app will generate a draft from the direction above."
           />
         </div>
         <Button type="submit" className="mt-3">
           <MessageSquareReply className="size-4" />
-          Save reply
+          Save and draft response
         </Button>
       </Form>
     </div>
@@ -740,6 +753,26 @@ function ReplyEditor({ prospect, reply }: { prospect: Prospect; reply: Reply }) 
       <p className="mt-3 whitespace-pre-wrap rounded-md border bg-background p-3 text-sm">
         {reply.inbound_content}
       </p>
+      {!reply.sent_at ? (
+        <Form method="post" className="mt-3 rounded-md border bg-background p-3">
+          <input type="hidden" name="intent" value="regenerateReplyResponse" />
+          <input type="hidden" name="prospectId" value={prospect.id} />
+          <input type="hidden" name="replyId" value={reply.id} />
+          <div className="space-y-2">
+            <Label htmlFor={`responseDirection-${reply.id}`}>Regenerate direction</Label>
+            <Textarea
+              id={`responseDirection-${reply.id}`}
+              name="responseDirection"
+              rows={3}
+              placeholder="Example: answer warmly, say the brief is a prototype, ask if a competitor comparison would be more useful..."
+            />
+          </div>
+          <Button type="submit" variant="outline" size="sm" className="mt-3">
+            <RefreshCw className="size-3.5" />
+            Regenerate draft
+          </Button>
+        </Form>
+      ) : null}
       <Form method="post" className="mt-3">
         <input type="hidden" name="intent" value="updateReplyResponse" />
         <input type="hidden" name="prospectId" value={prospect.id} />

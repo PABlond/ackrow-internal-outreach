@@ -1,2 +1,4 @@
 .env
 node_modules
+data/outreach-replica.sqlite*
+data/perf-test-replica.sqlite*

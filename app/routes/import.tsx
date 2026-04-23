@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 import type { Route } from "./+types/import";
 import { analyzeProspectTable, analyzeTwitterProspectTable, type BatchAnalysis } from "~/lib/batch.server";
-import { importAnalyzedProspects } from "~/lib/outreach.server";
+import { importAnalyzedProspects, requireWorkspace } from "~/lib/outreach.server";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
@@ -32,20 +32,21 @@ type ActionData =
 const emptyRow: Row = { name: "", position: "", profileUrl: "", about: "", signals: "", briefDirection: "" };
 
 export const meta: Route.MetaFunction = () => [
-  { title: "Import · Tempolis Outreach" },
+  { title: "Import · Outreach" },
   { name: "description", content: "Import and classify LinkedIn or X prospects in one place." },
 ];
 
-export async function action({ request }: Route.ActionArgs): Promise<ActionData> {
+export async function action({ request, params }: Route.ActionArgs): Promise<ActionData> {
   const formData = await request.formData();
   const source = (String(formData.get("source") || "linkedin") === "x" ? "x" : "linkedin") as Source;
   const table = String(formData.get("table") || "");
+  const workspace = await requireWorkspace(params.workspaceSlug);
 
   try {
     const analysis = source === "x"
-      ? await analyzeTwitterProspectTable(table)
-      : await analyzeProspectTable(table);
-    await importAnalyzedProspects(analysis.prospects);
+      ? await analyzeTwitterProspectTable(table, workspace)
+      : await analyzeProspectTable(table, workspace);
+    await importAnalyzedProspects(analysis.prospects, workspace.id);
     return { ok: true, source, analysis };
   } catch (error) {
     return { ok: false, source, error: error instanceof Error ? error.message : "Unknown error" };

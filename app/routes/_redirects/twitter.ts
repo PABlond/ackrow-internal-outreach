@@ -1,7 +1,7 @@
 import { redirect } from "react-router";
 
 export function loader() {
-  return redirect("/import?source=x");
+  return redirect("/tempolis/import?source=x");
 }
 
 export default function TwitterRedirect() {

@@ -2,7 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { AnalyzedProspect } from "./outreach.server";
+import {
+  getActivePromptTemplate,
+  getWorkspaceDocs,
+  recordPromptRun,
+  type AnalyzedProspect,
+  type Workspace,
+  type WorkspaceDoc,
+} from "./outreach.server";
 
 type RawProspect = {
   name: string;
@@ -26,9 +33,7 @@ export type BatchAnalysis = {
 
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(appDir, "..", "..", "..");
-const docsDir = path.join(repoRoot, "tempolis", "front", "docs");
-
-export async function analyzeProspectTable(tableText: string): Promise<BatchAnalysis> {
+export async function analyzeProspectTable(tableText: string, workspace: Workspace): Promise<BatchAnalysis> {
   loadLocalEnv();
   const prospects = parseProspectTable(tableText);
   if (prospects.length === 0) {
@@ -40,10 +45,14 @@ export async function analyzeProspectTable(tableText: string): Promise<BatchAnal
     throw new Error("Missing OPENROUTER_API_KEY. Add it to your shell env before running npm run dev.");
   }
 
-  const model = process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
-  const outreach = fs.readFileSync(path.join(docsDir, "outreach.md"), "utf8");
-  const brand = fs.readFileSync(path.join(docsDir, "brand.md"), "utf8");
-  const prompt = buildPrompt({ prospects, outreach, brand });
+  const template = await getActivePromptTemplate(workspace.id, "linkedin", "batch_analysis");
+  const docs = await getWorkspaceDocs(workspace.id);
+  const model = template.model || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
+  const prompt = renderPrompt(template.user_prompt, {
+    workspace,
+    docs,
+    prospects,
+  });
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -51,17 +60,16 @@ export async function analyzeProspectTable(tableText: string): Promise<BatchAnal
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": "http://localhost:4377",
-      "X-Title": "Tempolis Outreach App",
+      "X-Title": "Outreach App",
     },
     body: JSON.stringify({
       model,
-      temperature: 0.2,
+      temperature: template.temperature,
       response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
-          content:
-            "You are a strict JSON-producing public affairs outreach analyst. Return only valid JSON. Never include markdown.",
+          content: template.system_prompt,
         },
         { role: "user", content: prompt },
       ],
@@ -79,10 +87,18 @@ export async function analyzeProspectTable(tableText: string): Promise<BatchAnal
     throw new Error("OpenRouter returned an empty response.");
   }
 
-  return normalizeAnalysis(parseJson(content), prospects.length);
+  const parsed = parseJson(content);
+  await recordPromptRun({
+    workspaceId: workspace.id,
+    promptTemplateId: template.id,
+    inputJson: { tableText, prospects, prompt },
+    outputJson: parsed,
+    model,
+  });
+  return normalizeAnalysis(parsed, prospects.length, workspace.product_name);
 }
 
-export async function analyzeTwitterProspectTable(tableText: string): Promise<BatchAnalysis> {
+export async function analyzeTwitterProspectTable(tableText: string, workspace: Workspace): Promise<BatchAnalysis> {
   loadLocalEnv();
   const prospects = parseProspectTable(tableText);
   if (prospects.length === 0) {
@@ -94,10 +110,14 @@ export async function analyzeTwitterProspectTable(tableText: string): Promise<Ba
     throw new Error("Missing OPENROUTER_API_KEY. Add it to your shell env before running npm run dev.");
   }
 
-  const model = process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
-  const outreach = fs.readFileSync(path.join(docsDir, "outreach.md"), "utf8");
-  const brand = fs.readFileSync(path.join(docsDir, "brand.md"), "utf8");
-  const prompt = buildTwitterPrompt({ prospects, outreach, brand });
+  const template = await getActivePromptTemplate(workspace.id, "twitter", "batch_analysis");
+  const docs = await getWorkspaceDocs(workspace.id);
+  const model = template.model || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
+  const prompt = renderPrompt(template.user_prompt, {
+    workspace,
+    docs,
+    prospects,
+  });
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -105,17 +125,16 @@ export async function analyzeTwitterProspectTable(tableText: string): Promise<Ba
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": "http://localhost:4377",
-      "X-Title": "Tempolis Outreach App",
+      "X-Title": "Outreach App",
     },
     body: JSON.stringify({
       model,
-      temperature: 0.2,
+      temperature: template.temperature,
       response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
-          content:
-            "You are a strict JSON-producing public affairs outreach analyst. Return only valid JSON. Never include markdown.",
+          content: template.system_prompt,
         },
         { role: "user", content: prompt },
       ],
@@ -133,7 +152,15 @@ export async function analyzeTwitterProspectTable(tableText: string): Promise<Ba
     throw new Error("OpenRouter returned an empty response.");
   }
 
-  return normalizeTwitterAnalysis(parseJson(content), prospects.length);
+  const parsed = parseJson(content);
+  await recordPromptRun({
+    workspaceId: workspace.id,
+    promptTemplateId: template.id,
+    inputJson: { tableText, prospects, prompt },
+    outputJson: parsed,
+    model,
+  });
+  return normalizeTwitterAnalysis(parsed, prospects.length, workspace.product_name);
 }
 
 export function prospectEvidenceToTable(profile: {
@@ -149,6 +176,8 @@ export function prospectEvidenceToTable(profile: {
   rawText?: string;
 }) {
   const evidence = [
+    "Source: browser extension single-profile capture.",
+    "Important: do not classify as LEARN by default. Apply the strict LEARN/WARM/SAVE/SKIP strategy.",
     profile.signals,
     profile.activity ? `Activity: ${profile.activity}` : "",
     profile.experience ? `Experience: ${profile.experience}` : "",
@@ -192,149 +221,36 @@ function loadLocalEnv() {
   }
 }
 
-function buildPrompt({ prospects, outreach, brand }: { prospects: RawProspect[]; outreach: string; brand: string }) {
-  return `
-Analyze this new Tempolis LinkedIn outreach batch.
-
-TASK
-- Classify every prospect as LEARN, WARM, SAVE or SKIP using the outreach playbook.
-- Assign a wave: 1 for immediate learning outreach, 2 for calibration, 3 for premium/saved prospects, null for SKIP.
-- Pick only the best first-wave LEARN profiles for contactToday=true.
-- Generate exact LinkedIn connection messages for contactToday=true profiles.
-- Write all outreach messages in English by default: connectionMessage, reportMessage, noNoteReportMessage, and followupMessage.
-- Do not use French greetings or French message templates unless the input explicitly requests French. For now, assume English.
-- Use brief topics of 1 to 3 words only.
-- A brief topic is not the prospect's broad profession. It must be a concrete Tempolis brief subject: a figure, movement, issue, policy, controversy, narrative risk, or public debate.
-- Never use vague discipline labels as briefTopic: "public policy", "policy", "communications", "public affairs", "EU affairs", "regulation", "strategy".
-- If the user provides briefDirection, treat it as the strongest hint. If they provide signals/recent posts, use them to choose the topic.
-- Treat activity evidence carefully:
-  - A repost, like, comment, or visible activity is evidence of recent interest only, not proof that the prospect works on that topic.
-  - Do not write "your work on [topic]" unless the role/about/experience explicitly says they work on that topic.
-  - For repost-derived topics, use wording like "your recent interest in [topic]", "a topic you recently shared", or "given the policy issues visible in your activity".
-  - In briefPreparation, distinguish "profile evidence" from "activity signal"; do not claim a subject is in their professional domain based only on a repost.
-- Good briefTopic examples: "AI Act", "Energy security", "Tech backlash", "EU competitiveness", "Strategic autonomy", "Narrative risk", "Trade tensions".
-- Respect the outreach rule: no product pitch, no demo/call request, short connection note under 300 characters.
-- Generate two post-acceptance variants:
-  - reportMessage assumes a custom connection note was sent and may refer to the promised brief.
-  - noNoteReportMessage assumes no custom connection note was sent; it must open naturally with "Thanks for connecting" or equivalent and must not say "as promised" or "the brief I mentioned".
-- Make noNoteReportMessage genuinely adapted to the prospect:
-  - Use their role, company context, about field, signals, briefDirection, rationale, recommendedTemplate and briefTopic to pick one concrete angle.
-  - Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format.
-  - Explain why the brief may be relevant in one specific phrase, but do not overclaim the prospect's work from reposts or activity.
-  - Ask for feedback on angle, signal quality, or format, not generic "thoughts".
-  - Avoid filler phrases: "key topics", "professionals like yourself", "might be of interest", "any initial thoughts", "greatly appreciated".
-- Generate the J+2 follow-up.
-- Do not invent facts beyond the profile fields.
-
-OUTPUT JSON SHAPE
-{
-  "summary": {
-    "total": number,
-    "contactToday": number,
-    "wave2": number,
-    "saved": number,
-    "skipped": number
-  },
-  "prospects": [
-    {
-      "name": string,
-      "position": string,
-      "profileUrl": string,
-      "about": string,
-      "priorityTag": "LEARN" | "WARM" | "SAVE" | "SKIP",
-      "wave": 1 | 2 | 3 | null,
-      "contactNow": boolean,
-      "rationale": string,
-      "briefTopic": string,
-      "briefPreparation": string,
-      "recommendedTemplate": string,
-      "connectionMessage": string,
-      "reportMessage": string,
-      "noNoteReportMessage": string,
-      "followupMessage": string
-    }
-  ]
+function renderPrompt(template: string, input: { workspace: Workspace; docs: WorkspaceDoc[]; prospects: RawProspect[] }) {
+  return template
+    .replaceAll("{{productName}}", input.workspace.product_name)
+    .replaceAll("{{workspaceName}}", input.workspace.name)
+    .replaceAll("{{defaultLanguage}}", input.workspace.default_language || "en")
+    .replaceAll("{{workspaceDocs}}", formatWorkspaceDocs(input.docs))
+    .replaceAll("{{prospectsJson}}", JSON.stringify(input.prospects, null, 2))
+    .concat("\n\n", STRICT_CLASSIFICATION_POLICY);
 }
 
-TEMPLATES AND RULES
-${outreach}
+const STRICT_CLASSIFICATION_POLICY = `
+STRICT OUTREACH CLASSIFICATION POLICY
+- LEARN: good profile to learn from, and contactable now. Use only when the profile is clearly in ICP, likely to understand the product promise, has enough visible evidence to personalize a brief, and can produce useful feedback immediately.
+- WARM: very good profile, but not critical yet. Use when the person is relevant but should wait for 1 or 2 product/outreach iterations, or when evidence is promising but not strong enough for today's first wave.
+- SAVE: premium prospect to keep for later. Use for senior, high-leverage, high-brand-value, hard-to-reach, or strategically important profiles that deserve a stronger product/proof point before contacting.
+- SKIP: outside target, too weak, too generic, low probability of useful feedback, not enough evidence, or likely to be a poor learning conversation.
 
-BRAND GUARDRAILS
-${brand.slice(0, 16000)}
-
-PROSPECTS
-${JSON.stringify(prospects, null, 2)}
+SELECTION RULES
+- Never classify a prospect as LEARN just because they match a broad industry, title, or keyword.
+- For a browser-extension single-profile capture, still choose WARM, SAVE, or SKIP when appropriate.
+- contactToday=true only for LEARN wave 1 profiles that are genuinely worth contacting now.
+- If the evidence is thin, generic, scraped footer text, or mostly unrelated page noise, prefer WARM or SKIP.
+- If the profile is excellent but senior/premium enough that a weak early message could waste the opportunity, choose SAVE.
+- If there is no concrete brief angle, do not mark LEARN.
 `;
-}
 
-function buildTwitterPrompt({ prospects, outreach, brand }: { prospects: RawProspect[]; outreach: string; brand: string }) {
-  return `
-Analyze this new Tempolis Twitter/X outreach batch.
-
-CONTEXT
-This is not LinkedIn. We are testing Twitter/X as a manual acquisition channel. The app will help copy messages and track follow-ups, but it will not automate X.
-
-TASK
-- Classify every prospect as LEARN, WARM, SAVE or SKIP using the outreach playbook.
-- Assign a wave: 1 for immediate learning outreach, 2 for calibration, 3 for premium/saved prospects, null for SKIP.
-- Pick only the best first-wave LEARN profiles for contactToday=true.
-- Write all outreach messages in English by default.
-- Use brief topics of 1 to 3 words only.
-- A brief topic must be concrete: a figure, movement, issue, policy, controversy, narrative risk, public debate, or public discourse signal.
-- Never use vague discipline labels as briefTopic: "public policy", "policy", "communications", "public affairs", "EU affairs", "regulation", "strategy".
-- Treat Twitter activity carefully: posts, reposts, likes, follows and bio claims are signals of interest, not proof of professional ownership unless explicitly stated.
-- Do not say "your work on [topic]" unless the bio/about/role explicitly says they work on that topic.
-- For post-derived topics, use wording like "your recent posts on [topic]", "a topic you recently shared", or "given the policy issues visible in your feed".
-- Keep Twitter/X copy lighter and more direct than LinkedIn:
-  - twitterDmMessage: 4 lines max, no pitch, no demo/call ask, includes [shared link] on its own line if a brief is being sent.
-  - twitterDmMessage must explicitly connect the brief to one concrete source signal from the profile/feed.
-  - Preferred structure: "I prepared a short brief on [briefTopic], based on [specific signal from your bio/posts/feed]."
-  - The source signal should be specific but cautious: "your recent posts on...", "a topic you shared", "the policy signals in your feed", "your bio focus on...".
-  - Do not write vague copy like "I saw your recent interest in [topic]" unless the exact source signal is unclear.
-  - twitterFollowupMessage: one gentle follow-up at J+2 max.
-- If DMs may be closed, still generate a DM-style message that can be adapted as a reply after interaction.
-- Mention the builder context lightly: the sender is building Tempolis / testing a small public affairs brief format.
-- Ask for feedback on the angle, signal quality, or format. Do not ask for generic "thoughts".
-- Do not invent facts beyond the profile fields.
-
-OUTPUT JSON SHAPE
-{
-  "summary": {
-    "total": number,
-    "contactToday": number,
-    "wave2": number,
-    "saved": number,
-    "skipped": number
-  },
-  "prospects": [
-    {
-      "name": string,
-      "position": string,
-      "profileUrl": string,
-      "twitterHandle": string,
-      "about": string,
-      "priorityTag": "LEARN" | "WARM" | "SAVE" | "SKIP",
-      "wave": 1 | 2 | 3 | null,
-      "contactNow": boolean,
-      "rationale": string,
-      "briefTopic": string,
-      "briefPreparation": string,
-      "recommendedTemplate": string,
-      "twitterDmMessage": string,
-      "twitterFollowupMessage": string
-    }
-  ]
-}
-
-LINKEDIN PLAYBOOK TO ADAPT, NOT COPY LITERALLY
-${outreach}
-
-BRAND GUARDRAILS
-${brand.slice(0, 16000)}
-
-TWITTER/X PROSPECTS
-${JSON.stringify(prospects, null, 2)}
-`;
+function formatWorkspaceDocs(docs: WorkspaceDoc[]) {
+  return docs
+    .map((doc) => `## ${doc.title} (${doc.type})\n${doc.content.slice(0, 18000)}`)
+    .join("\n\n---\n\n");
 }
 
 function parseProspectTable(input: string): RawProspect[] {
@@ -412,9 +328,9 @@ function parseJson(content: string) {
   return JSON.parse(json);
 }
 
-function normalizeAnalysis(value: unknown, total: number): BatchAnalysis {
+function normalizeAnalysis(value: unknown, total: number, productName = "Tempolis"): BatchAnalysis {
   const input = value as Partial<BatchAnalysis>;
-  const prospects = Array.isArray(input.prospects) ? input.prospects.map(normalizeProspect).filter((item) => item.name && item.profileUrl) : [];
+  const prospects = Array.isArray(input.prospects) ? input.prospects.map((item) => normalizeProspect(item, productName)).filter((item) => item.name && item.profileUrl) : [];
   const summary = {
     total,
     contactToday: prospects.filter((item) => item.contactNow).length,
@@ -425,9 +341,9 @@ function normalizeAnalysis(value: unknown, total: number): BatchAnalysis {
   return { summary, prospects };
 }
 
-function normalizeTwitterAnalysis(value: unknown, total: number): BatchAnalysis {
+function normalizeTwitterAnalysis(value: unknown, total: number, productName = "Tempolis"): BatchAnalysis {
   const input = value as Partial<BatchAnalysis>;
-  const prospects = Array.isArray(input.prospects) ? input.prospects.map(normalizeTwitterProspect).filter((item) => item.name && item.profileUrl) : [];
+  const prospects = Array.isArray(input.prospects) ? input.prospects.map((item) => normalizeTwitterProspect(item, productName)).filter((item) => item.name && item.profileUrl) : [];
   const summary = {
     total,
     contactToday: prospects.filter((item) => item.contactNow).length,
@@ -438,15 +354,15 @@ function normalizeTwitterAnalysis(value: unknown, total: number): BatchAnalysis 
   return { summary, prospects };
 }
 
-function normalizeProspect(item: Partial<AnalyzedProspect>): AnalyzedProspect {
+function normalizeProspect(item: Partial<AnalyzedProspect>, productName = "Tempolis"): AnalyzedProspect {
   const tag = ["LEARN", "WARM", "SAVE", "SKIP"].includes(String(item.priorityTag)) ? item.priorityTag : "SKIP";
   const wave = typeof item.wave === "number" ? item.wave : null;
   const rawBriefTopic = clean(item.briefTopic).split(/\s+/).slice(0, 3).join(" ");
-  const briefTopic = isGenericBriefTopic(rawBriefTopic) ? fallbackBriefTopic(item) : rawBriefTopic;
+  const briefTopic = isGenericBriefTopic(rawBriefTopic, productName) ? fallbackBriefTopic(item, productName) : rawBriefTopic;
   const firstName = clean(item.name).split(/\s+/)[0] || clean(item.name);
   const connectionMessage = enforceEnglish(
     clean(item.connectionMessage),
-    `Hi ${firstName}, I'm building a tool aimed at EU public affairs professionals. I prepared a brief on ${briefTopic || "your policy area"} that might resonate. Would value your view.`,
+    `Hi ${firstName}, I'm building ${productName} and testing short briefs for public affairs professionals. I prepared one on ${briefTopic || "your policy area"}. Would value your view.`,
   );
   const reportMessage = enforceEnglish(
     clean(item.reportMessage),
@@ -456,9 +372,9 @@ As promised, the brief on ${briefTopic || "your policy area"}: what public disco
 
 [shared link]
 
-I'm testing it with public affairs profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`,
+I'm testing it with relevant profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`,
   );
-  const noNoteFallback = noNoteFallbackCopy(firstName, briefTopic, item.position, item.about, item.recommendedTemplate);
+  const noNoteFallback = noNoteFallbackCopy(firstName, briefTopic, item.position, item.about, item.recommendedTemplate, productName);
   const noNoteReportMessage = noPriorNoteCopy(enforceEnglish(clean(item.noNoteReportMessage), noNoteFallback), noNoteFallback);
   const followupMessage = enforceEnglish(
     clean(item.followupMessage),
@@ -484,14 +400,14 @@ I'm testing it with public affairs profiles before a proper launch. If the angle
   };
 }
 
-function normalizeTwitterProspect(item: Partial<AnalyzedProspect>): AnalyzedProspect {
+function normalizeTwitterProspect(item: Partial<AnalyzedProspect>, productName = "Tempolis"): AnalyzedProspect {
   const base = normalizeProspect({
     ...item,
     connectionMessage: "",
     reportMessage: "",
     noNoteReportMessage: "",
     followupMessage: item.twitterFollowupMessage || item.followupMessage || "",
-  });
+  }, productName);
   const profileUrl = normalizeTwitterProfileUrl(item.profileUrl || item.twitterUrl || item.twitterHandle || "");
   const first = clean(item.name).split(/\s+/)[0] || clean(item.name);
   const topic = base.briefTopic || "Narrative risk";
@@ -502,8 +418,8 @@ function normalizeTwitterProspect(item: Partial<AnalyzedProspect>): AnalyzedPros
     twitterUrl: profileUrl,
     twitterHandle: normalizeTwitterHandle(item.twitterHandle || profileUrl),
     twitterDmMessage: sanitizeTwitterDm(
-      enforceEnglish(clean(item.twitterDmMessage), twitterDmFallback(first, topic, item)),
-      twitterDmFallback(first, topic, item),
+      enforceEnglish(clean(item.twitterDmMessage), twitterDmFallback(first, topic, item, productName)),
+      twitterDmFallback(first, topic, item, productName),
     ),
     twitterFollowupMessage: enforceEnglish(
       clean(item.twitterFollowupMessage || item.followupMessage),
@@ -517,9 +433,9 @@ function normalizeTwitterProfileUrl(value: string) {
   return handle ? `https://x.com/${handle}` : clean(value);
 }
 
-function twitterDmFallback(firstName: string, topic: string, item: Partial<AnalyzedProspect>) {
+function twitterDmFallback(firstName: string, topic: string, item: Partial<AnalyzedProspect>, productName = "Tempolis") {
   const signal = twitterSourceSignal(item);
-  return `Hi ${firstName}, I'm building Tempolis and testing a short public affairs brief format.
+  return `Hi ${firstName}, I'm building ${productName} and testing a short brief format.
 
 I prepared one on ${topic}, based on ${signal}.
 
@@ -576,9 +492,9 @@ function noPriorNoteCopy(value: string, fallback: string) {
   return fallback;
 }
 
-function isGenericBriefTopic(value: string) {
+function isGenericBriefTopic(value: string, productName = "Tempolis") {
   const normalized = value.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-  return [
+  const commonGenericTopics = [
     "policy",
     "public policy",
     "communications",
@@ -587,11 +503,37 @@ function isGenericBriefTopic(value: string) {
     "regulation",
     "strategy",
     "stakeholder management",
-  ].includes(normalized);
+  ];
+  const narralensGenericTopics = [
+    "brand",
+    "brand perception",
+    "perception",
+    "social listening",
+    "brand monitoring",
+    "campaign monitoring",
+    "campaign",
+    "marketing",
+    "reputation",
+    "consumer insights",
+    "narrative intelligence",
+    "competitive intelligence",
+  ];
+  return [...commonGenericTopics, ...(isNarralens(productName) ? narralensGenericTopics : [])].includes(normalized);
 }
 
-function fallbackBriefTopic(item: Partial<AnalyzedProspect>) {
+function fallbackBriefTopic(item: Partial<AnalyzedProspect>, productName = "Tempolis") {
   const text = `${clean(item.position)} ${clean(item.about)} ${clean(item.rationale)} ${clean(item.recommendedTemplate)}`.toLowerCase();
+  if (isNarralens(productName)) {
+    if (/\b(openai|chatgpt|anthropic|claude|ai launch|artificial intelligence)\b/.test(text)) return "OpenAI launch";
+    if (/\b(nike|adidas|sport|sneaker|fashion|retail|sustainability)\b/.test(text)) return "Nike sustainability";
+    if (/\b(notion|clickup|saas|productivity|b2b)\b/.test(text)) return "Notion vs ClickUp";
+    if (/\b(apple|vision pro|consumer tech|hardware)\b/.test(text)) return "Apple Vision Pro";
+    if (/\b(duolingo|social|community|tiktok|campaign|creator)\b/.test(text)) return "Duolingo marketing";
+    if (/\b(tesla|elon|automotive|ev|robotaxi)\b/.test(text)) return "Tesla robotaxi";
+    if (/\b(competitor|competitive|positioning|market)\b/.test(text)) return "Notion vs ClickUp";
+    if (/\b(launch|announcement|release)\b/.test(text)) return "OpenAI launch";
+    return "Nike sustainability";
+  }
   if (/\b(ai|artificial intelligence|ai act)\b/.test(text)) return "AI Act";
   if (/\b(energy|climate|grid|power)\b/.test(text)) return "Energy security";
   if (/\b(competitiveness|industry|industrial)\b/.test(text)) return "EU competitiveness";
@@ -602,12 +544,25 @@ function fallbackBriefTopic(item: Partial<AnalyzedProspect>) {
   return "Policy backlash";
 }
 
-function noNoteFallbackCopy(firstName: string, briefTopic: string, position?: unknown, about?: unknown, template?: unknown) {
+function isNarralens(productName = "Tempolis") {
+  return productName.toLowerCase() === "narralens";
+}
+
+function noNoteFallbackCopy(firstName: string, briefTopic: string, position?: unknown, about?: unknown, template?: unknown, productName = "Tempolis") {
   const topic = briefTopic || "your policy area";
   const context = prospectContext(position, about, template);
+  if (isNarralens(productName)) {
+    return `Hi ${firstName},
+
+Thanks for connecting. I'm building ${productName} and testing short briefs for brand/social workflows, so I prepared one on ${topic} as a concrete campaign or competitor readout.
+
+[shared link]
+
+If the angle feels useful for the kind of monitoring or client updates you deal with, your blunt feedback would help a lot.`;
+  }
   return `Hi ${firstName},
 
-Thanks for connecting. I'm building Tempolis, a tool for public affairs narrative briefs, and I prepared a short brief on ${topic} because it seems close to your work on ${context}.
+Thanks for connecting. I'm building ${productName} and testing short briefs, and I prepared one on ${topic} because it seems close to your work on ${context}.
 
 [shared link]
 

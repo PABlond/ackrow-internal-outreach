@@ -1,6 +1,6 @@
 # Tempolis Outreach App
 
-React Router outreach tracker backed by local SQLite by default, or Turso/libSQL when `DATABASE_URL` is configured.
+React Router outreach tracker backed by local SQLite by default. When `DATABASE_URL` points to Turso/libSQL, the app uses an embedded local replica for speed and syncs it with Turso.
 
 ## Commands
 
@@ -42,6 +42,16 @@ To share the same CRM across machines, use Turso:
 ```env
 DATABASE_URL=libsql://your-db.turso.io
 DATABASE_AUTH_TOKEN=...
+```
+
+With a remote `DATABASE_URL`, the app reads and writes through a local replica at `data/outreach-replica.sqlite` by default, then syncs with Turso. This keeps the UI responsive while still sharing data across machines.
+
+Optional controls:
+
+```env
+DATABASE_REPLICA_PATH=/absolute/path/to/outreach-replica.sqlite
+DATABASE_SYNC_INTERVAL_MS=5000
+DATABASE_USE_REMOTE_DIRECT=1 # disable the replica and query Turso directly
 ```
 
 Push the current local SQLite data to Turso:

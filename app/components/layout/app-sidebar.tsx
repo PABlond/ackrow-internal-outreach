@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { NavLink } from "react-router";
+import { NavLink, useLocation, useNavigate } from "react-router";
 import {
   Compass,
   LayoutDashboard,
   Menu,
+  Settings,
   Upload,
   Users,
 } from "lucide-react";
@@ -13,6 +14,7 @@ import { Button } from "~/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "~/components/ui/sheet";
 import { cn } from "~/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
+import type { Workspace } from "~/lib/outreach.server";
 
 type NavItem = {
   to: string;
@@ -22,17 +24,18 @@ type NavItem = {
 };
 
 const items: NavItem[] = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/prospects", label: "Prospects", icon: Users },
   { to: "/import", label: "Import", icon: Upload },
   { to: "/discover", label: "Discover", icon: Compass },
+  { to: "/settings", label: "Settings", icon: Settings },
 ];
 
-function NavLinkItem({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
+function NavLinkItem({ item, basePath, onNavigate }: { item: NavItem; basePath: string; onNavigate?: () => void }) {
   const Icon = item.icon;
   return (
     <NavLink
-      to={item.to}
+      to={`${basePath}${item.to}`}
       end={item.end}
       onClick={onNavigate}
       className={({ isActive }) =>
@@ -50,18 +53,53 @@ function NavLinkItem({ item, onNavigate }: { item: NavItem; onNavigate?: () => v
   );
 }
 
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarContent({
+  workspaces,
+  activeWorkspace,
+  onNavigate,
+}: {
+  workspaces: Workspace[];
+  activeWorkspace: Workspace;
+  onNavigate?: () => void;
+}) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activeInitial = (activeWorkspace.product_name || activeWorkspace.name || "?").slice(0, 1).toUpperCase();
+  const basePath = `/${activeWorkspace.slug}`;
   return (
     <div className="flex h-full flex-col gap-2 p-3">
       <div className="flex h-10 items-center gap-2 px-2">
         <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground text-sm font-semibold">
-          T
+          {activeInitial}
         </div>
-        <div className="text-sm font-semibold">Tempolis Outreach</div>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold">{activeWorkspace.product_name} Outreach</div>
+          <p className="truncate text-[11px] text-sidebar-foreground/55">Internal CRM</p>
+        </div>
+      </div>
+      <div className="px-2 py-2">
+        <label htmlFor="workspace-switcher" className="sr-only">
+          Workspace
+        </label>
+        <select
+          id="workspace-switcher"
+          name="slug"
+          defaultValue={activeWorkspace.slug}
+          onChange={(event) => {
+            navigate(workspaceSwitchPath(event.currentTarget.value, location.pathname, location.search, workspaces));
+          }}
+          className="h-9 w-full rounded-md border border-sidebar-border bg-background px-2 text-sm text-foreground outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/40"
+        >
+          {workspaces.map((workspace) => (
+            <option key={workspace.slug} value={workspace.slug}>
+              {workspace.name}
+            </option>
+          ))}
+        </select>
       </div>
       <nav className="mt-2 flex flex-1 flex-col gap-0.5">
         {items.map((item) => (
-          <NavLinkItem key={item.to} item={item} onNavigate={onNavigate} />
+          <NavLinkItem key={item.to || "dashboard"} item={item} basePath={basePath} onNavigate={onNavigate} />
         ))}
       </nav>
       <div className="mt-auto border-t pt-2">
@@ -71,14 +109,31 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+function workspaceSwitchPath(slug: string, pathname: string, search: string, workspaces: Workspace[]) {
+  const parts = pathname.split("/").filter(Boolean);
+  const workspaceSlugs = new Set(workspaces.map((workspace) => workspace.slug));
+  const rest = parts.length > 0 && workspaceSlugs.has(parts[0]) ? parts.slice(1) : parts;
+  const safeRest = rest[0] === "prospects" && rest.length > 1 ? ["prospects"] : rest;
+  return `/${[slug, ...safeRest].join("/")}${search}`;
+}
+
+export function AppShell({
+  children,
+  workspaces,
+  activeWorkspace,
+}: {
+  children: ReactNode;
+  workspaces: Workspace[];
+  activeWorkspace: Workspace;
+}) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const activeInitial = (activeWorkspace.product_name || activeWorkspace.name || "?").slice(0, 1).toUpperCase();
 
   return (
     <div className="flex min-h-screen w-full bg-background text-foreground">
       <aside className="hidden w-60 shrink-0 border-r bg-sidebar text-sidebar-foreground lg:block">
         <div className="sticky top-0 h-screen">
-          <SidebarContent />
+          <SidebarContent workspaces={workspaces} activeWorkspace={activeWorkspace} />
         </div>
       </aside>
 
@@ -91,14 +146,18 @@ export function AppShell({ children }: { children: ReactNode }) {
               </Button>
             </SheetTrigger>
             <SheetContent side="left" className="w-60 p-0">
-              <SidebarContent onNavigate={() => setMobileOpen(false)} />
+              <SidebarContent
+                workspaces={workspaces}
+                activeWorkspace={activeWorkspace}
+                onNavigate={() => setMobileOpen(false)}
+              />
             </SheetContent>
           </Sheet>
           <div className="flex items-center gap-2">
             <div className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground text-xs font-semibold">
-              T
+              {activeInitial}
             </div>
-            <span className="text-sm font-semibold">Tempolis Outreach</span>
+            <span className="text-sm font-semibold">{activeWorkspace.product_name} Outreach</span>
           </div>
         </header>
 

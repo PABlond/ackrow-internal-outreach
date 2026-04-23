@@ -14,19 +14,36 @@ type Pages = {
   "/": {
     params: {};
   };
-  "/prospects": {
-    params: {};
-  };
-  "/prospects/:id": {
+  "/:workspaceSlug": {
     params: {
+      "workspaceSlug": string;
+    };
+  };
+  "/:workspaceSlug/prospects": {
+    params: {
+      "workspaceSlug": string;
+    };
+  };
+  "/:workspaceSlug/prospects/:id": {
+    params: {
+      "workspaceSlug": string;
       "id": string;
     };
   };
-  "/import": {
-    params: {};
+  "/:workspaceSlug/import": {
+    params: {
+      "workspaceSlug": string;
+    };
   };
-  "/discover": {
-    params: {};
+  "/:workspaceSlug/discover": {
+    params: {
+      "workspaceSlug": string;
+    };
+  };
+  "/:workspaceSlug/settings": {
+    params: {
+      "workspaceSlug": string;
+    };
   };
   "/api/extension/dashboard": {
     params: {};
@@ -35,6 +52,21 @@ type Pages = {
     params: {};
   };
   "/api/extension/prospect": {
+    params: {};
+  };
+  "/workspace": {
+    params: {};
+  };
+  "/prospects": {
+    params: {};
+  };
+  "/import": {
+    params: {};
+  };
+  "/discover": {
+    params: {};
+  };
+  "/settings": {
     params: {};
   };
   "/batch": {
@@ -51,31 +83,39 @@ type Pages = {
 type RouteFiles = {
   "root.tsx": {
     id: "root";
-    page: "/" | "/prospects" | "/prospects/:id" | "/import" | "/discover" | "/api/extension/dashboard" | "/api/extension/connection-status" | "/api/extension/prospect" | "/batch" | "/twitter" | "/search";
+    page: "/" | "/:workspaceSlug" | "/:workspaceSlug/prospects" | "/:workspaceSlug/prospects/:id" | "/:workspaceSlug/import" | "/:workspaceSlug/discover" | "/:workspaceSlug/settings" | "/api/extension/dashboard" | "/api/extension/connection-status" | "/api/extension/prospect" | "/workspace" | "/prospects" | "/import" | "/discover" | "/settings" | "/batch" | "/twitter" | "/search";
+  };
+  "routes/_redirects/root.ts": {
+    id: "routes/_redirects/root";
+    page: "/";
   };
   "routes/_app.tsx": {
     id: "routes/_app";
-    page: "/" | "/prospects" | "/prospects/:id" | "/import" | "/discover";
+    page: "/:workspaceSlug" | "/:workspaceSlug/prospects" | "/:workspaceSlug/prospects/:id" | "/:workspaceSlug/import" | "/:workspaceSlug/discover" | "/:workspaceSlug/settings";
   };
   "routes/home.tsx": {
     id: "routes/home";
-    page: "/";
+    page: "/:workspaceSlug";
   };
   "routes/prospects._index.tsx": {
     id: "routes/prospects._index";
-    page: "/prospects";
+    page: "/:workspaceSlug/prospects";
   };
   "routes/prospect.$id.tsx": {
     id: "routes/prospect.$id";
-    page: "/prospects/:id";
+    page: "/:workspaceSlug/prospects/:id";
   };
   "routes/import.tsx": {
     id: "routes/import";
-    page: "/import";
+    page: "/:workspaceSlug/import";
   };
   "routes/discover.tsx": {
     id: "routes/discover";
-    page: "/discover";
+    page: "/:workspaceSlug/discover";
+  };
+  "routes/settings.tsx": {
+    id: "routes/settings";
+    page: "/:workspaceSlug/settings";
   };
   "routes/api.extension.dashboard.ts": {
     id: "routes/api.extension.dashboard";
@@ -88,6 +128,26 @@ type RouteFiles = {
   "routes/api.extension.prospect.ts": {
     id: "routes/api.extension.prospect";
     page: "/api/extension/prospect";
+  };
+  "routes/_redirects/workspace.ts": {
+    id: "routes/_redirects/workspace";
+    page: "/workspace";
+  };
+  "routes/_redirects/prospects.ts": {
+    id: "routes/_redirects/prospects";
+    page: "/prospects";
+  };
+  "routes/_redirects/import.ts": {
+    id: "routes/_redirects/import";
+    page: "/import";
+  };
+  "routes/_redirects/discover.ts": {
+    id: "routes/_redirects/discover";
+    page: "/discover";
+  };
+  "routes/_redirects/settings.ts": {
+    id: "routes/_redirects/settings";
+    page: "/settings";
   };
   "routes/_redirects/batch.ts": {
     id: "routes/_redirects/batch";
@@ -105,15 +165,22 @@ type RouteFiles = {
 
 type RouteModules = {
   "root": typeof import("./app/root.tsx");
+  "routes/_redirects/root": typeof import("./app/routes/_redirects/root.ts");
   "routes/_app": typeof import("./app/routes/_app.tsx");
   "routes/home": typeof import("./app/routes/home.tsx");
   "routes/prospects._index": typeof import("./app/routes/prospects._index.tsx");
   "routes/prospect.$id": typeof import("./app/routes/prospect.$id.tsx");
   "routes/import": typeof import("./app/routes/import.tsx");
   "routes/discover": typeof import("./app/routes/discover.tsx");
+  "routes/settings": typeof import("./app/routes/settings.tsx");
   "routes/api.extension.dashboard": typeof import("./app/routes/api.extension.dashboard.ts");
   "routes/api.extension.connection-status": typeof import("./app/routes/api.extension.connection-status.ts");
   "routes/api.extension.prospect": typeof import("./app/routes/api.extension.prospect.ts");
+  "routes/_redirects/workspace": typeof import("./app/routes/_redirects/workspace.ts");
+  "routes/_redirects/prospects": typeof import("./app/routes/_redirects/prospects.ts");
+  "routes/_redirects/import": typeof import("./app/routes/_redirects/import.ts");
+  "routes/_redirects/discover": typeof import("./app/routes/_redirects/discover.ts");
+  "routes/_redirects/settings": typeof import("./app/routes/_redirects/settings.ts");
   "routes/_redirects/batch": typeof import("./app/routes/_redirects/batch.ts");
   "routes/_redirects/twitter": typeof import("./app/routes/_redirects/twitter.ts");
   "routes/_redirects/search": typeof import("./app/routes/_redirects/search.ts");
