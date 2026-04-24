@@ -1,4 +1,5 @@
-import { Form, Link, redirect, useLoaderData } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { data, Form, Link, redirect, useFetcher, useLoaderData, useRevalidator, type FetcherWithComponents } from "react-router";
 import {
   Archive,
   ArrowLeft,
@@ -8,6 +9,7 @@ import {
   Clipboard,
   ExternalLink,
   LinkIcon,
+  Loader2,
   MessageSquareReply,
   RefreshCw,
   Save,
@@ -20,8 +22,10 @@ import { toast } from "sonner";
 import type { Route } from "./+types/prospect.$id";
 import {
   getProspectDetail,
+  generateBriefTopicSuggestions,
   requireWorkspace,
   runProspectAction,
+  type BriefTopicSuggestion,
   type Prospect,
   type Reply,
   type Task,
@@ -37,9 +41,39 @@ import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "~/components/ui/sheet";
 import { Textarea } from "~/components/ui/textarea";
 import { statusVariant } from "~/components/prospects/status-badge";
 import { cn } from "~/lib/utils";
+
+type ProspectActionResult =
+  | {
+      ok: true;
+      intent: string;
+    }
+  | {
+      ok: true;
+      intent: "suggestBriefTopics";
+      suggestions: BriefTopicSuggestion[];
+    }
+  | {
+      ok: false;
+      intent: string;
+      error: string;
+    };
+
+function isSuggestionResult(
+  result: ProspectActionResult,
+): result is Extract<ProspectActionResult, { ok: true; intent: "suggestBriefTopics" }> {
+  return result.ok && result.intent === "suggestBriefTopics";
+}
 
 export const meta: Route.MetaFunction = ({ data }) => {
   const name = data?.detail?.prospect?.name || "Prospect";
@@ -59,11 +93,27 @@ export async function loader({ params }: Route.LoaderArgs) {
 export async function action({ request, params }: Route.ActionArgs) {
   const workspace = await requireWorkspace(params.workspaceSlug);
   const formData = await request.formData();
-  await runProspectAction(formData, workspace.id);
-  if (String(formData.get("intent") || "") === "deleteProspect") {
-    return redirect(`/${workspace.slug}`);
+  const intent = String(formData.get("intent") || "");
+
+  try {
+    if (intent === "suggestBriefTopics") {
+      const prospectId = Number(formData.get("prospectId"));
+      const direction = String(formData.get("direction") || "").trim();
+      const suggestions = await generateBriefTopicSuggestions(prospectId, direction);
+      return data<ProspectActionResult>({ ok: true, intent, suggestions });
+    }
+    await runProspectAction(formData, workspace.id);
+    if (intent === "deleteProspect") {
+      return redirect(`/${workspace.slug}`);
+    }
+    return data<ProspectActionResult>({ ok: true, intent });
+  } catch (error) {
+    return data<ProspectActionResult>({
+      ok: false,
+      intent,
+      error: error instanceof Error ? error.message : "Unexpected error",
+    }, { status: 400 });
   }
-  return redirect(`/${workspace.slug}/prospects/${params.id}`);
 }
 
 export default function ProspectDetail() {
@@ -189,36 +239,12 @@ export default function ProspectDetail() {
                 title="Brief"
                 detail="Topic, preparation notes and shared URL."
               >
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Form method="post" className="space-y-3">
-                    <input type="hidden" name="intent" value="updateBriefStrategy" />
-                    <input type="hidden" name="prospectId" value={prospect.id} />
-                    <div className="space-y-2">
-                      <Label htmlFor="briefTopic">Topic</Label>
-                      <Input
-                        id="briefTopic"
-                        name="briefTopic"
-                        defaultValue={prospect.brief_topic || ""}
-                        required
-                        maxLength={80}
-                        placeholder="Narrative risk"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="briefPreparation">Preparation notes</Label>
-                      <Textarea
-                        id="briefPreparation"
-                        name="briefPreparation"
-                        defaultValue={prospect.preparation_notes || ""}
-                        rows={4}
-                        placeholder="Why this subject fits the profile, source signal, angle to prepare..."
-                      />
-                    </div>
-                    <Button type="submit" variant="outline" size="sm">
-                      <Save className="size-4" />
-                      Save brief theme
-                    </Button>
-                  </Form>
+                <div className="grid gap-4">
+                  <div className="flex justify-end">
+                    <BriefTopicSuggestionSheet prospect={prospect} />
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <BriefStrategyForm prospect={prospect} />
                   <div className="space-y-2">
                     <Label>Shared URL</Label>
                     {prospect.shared_url ? (
@@ -232,23 +258,10 @@ export default function ProspectDetail() {
                         <ExternalLink className="size-3.5" />
                       </a>
                     ) : (
-                      <Form method="post" className="flex gap-2">
-                        <input type="hidden" name="intent" value="addBriefUrl" />
-                        <input type="hidden" name="prospectId" value={prospect.id} />
-                        <Input
-                          name="sharedUrl"
-                          type="url"
-                          required
-                          placeholder="https://tempolis.com/share/..."
-                          className="flex-1"
-                        />
-                        <Button type="submit" variant="outline" size="sm">
-                          <LinkIcon className="size-4" />
-                          Add URL
-                        </Button>
-                      </Form>
+                      <BriefUrlInlineForm prospectId={prospect.id} />
                     )}
                   </div>
+                </div>
                 </div>
               </SectionAccordion>
 
@@ -262,23 +275,14 @@ export default function ProspectDetail() {
                       : "Copy exact LinkedIn copy."
                   }
                 >
-                  <div className="mb-4 flex flex-wrap gap-2 rounded-lg border bg-muted/30 p-3">
-                    <ActionButton
-                      intent="regenerateFromLatestCapture"
-                      prospectId={prospect.id}
-                      label={latestEvidence ? "Regenerate from latest capture" : "Regenerate from current context"}
-                      icon={<RefreshCw size={16} />}
-                      variant="outline"
+                  <div className="mb-4 flex justify-end">
+                    <PrimaryMessageRegenerationSheet
+                      prospect={prospect}
+                      showConnectionNote={showConnectionNote}
+                      connectionLocked={connectionLocked}
+                      reportLocked={reportLocked}
+                      latestEvidence={Boolean(latestEvidence)}
                     />
-                    {prospect.source_channel === "linkedin" ? (
-                      <ActionButton
-                        intent="regenerateSaferCopy"
-                        prospectId={prospect.id}
-                        label="No-note rewrite"
-                        icon={<RefreshCw size={16} />}
-                        variant="outline"
-                      />
-                    ) : null}
                   </div>
                   {prospect.source_channel === "twitter" ? (
                     <div className="grid gap-3">
@@ -380,29 +384,7 @@ export default function ProspectDetail() {
 
             <Accordion type="multiple" defaultValue={defaultOpen}>
               <SectionAccordion value="notes" title="Internal note" detail="Small private CRM note.">
-                <Form method="post" className="space-y-3">
-                  <input type="hidden" name="intent" value="updateProspectNotes" />
-                  <input type="hidden" name="prospectId" value={prospect.id} />
-                  {prospect.notes ? (
-                    <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                      <p className="whitespace-pre-wrap">{prospect.notes}</p>
-                    </div>
-                  ) : null}
-                  <div className="space-y-2">
-                    <Label htmlFor="notes">Note</Label>
-                    <Textarea
-                      id="notes"
-                      name="notes"
-                      defaultValue={prospect.notes || ""}
-                      rows={3}
-                      placeholder="Tiny internal note, context, next angle..."
-                    />
-                  </div>
-                  <Button type="submit" variant="outline" size="sm">
-                    <Save className="size-4" />
-                    Save note
-                  </Button>
-                </Form>
+                <ProspectNotesForm prospect={prospect} />
               </SectionAccordion>
             </Accordion>
 
@@ -480,6 +462,490 @@ function SectionAccordion({
       </AccordionTrigger>
       <AccordionContent className="px-5 pb-5 pt-0">{children}</AccordionContent>
     </AccordionItem>
+  );
+}
+
+function useFetcherToast(
+  fetcher: FetcherWithComponents<ProspectActionResult>,
+  options: {
+    success?: string | ((result: ProspectActionResult) => string | null);
+    error?: string | ((result: ProspectActionResult) => string | null);
+    onSuccess?: (result: ProspectActionResult) => void;
+    revalidate?: boolean;
+  },
+) {
+  const lastDataRef = useRef<ProspectActionResult | null>(null);
+  const revalidator = useRevalidator();
+
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    if (lastDataRef.current === fetcher.data) return;
+    lastDataRef.current = fetcher.data;
+
+    if (!fetcher.data.ok) {
+      const message = typeof options.error === "function"
+        ? options.error(fetcher.data)
+        : options.error;
+      toast.error(message || "Action failed", {
+        description: fetcher.data.error,
+      });
+      return;
+    }
+
+    const message = typeof options.success === "function"
+      ? options.success(fetcher.data)
+      : options.success;
+    if (message) toast.success(message);
+    if (options.revalidate !== false) revalidator.revalidate();
+    options.onSuccess?.(fetcher.data);
+  }, [fetcher.state, fetcher.data, options, revalidator]);
+}
+
+function actionToastSuccess(intent: string, label: string) {
+  const messages: Record<string, string> = {
+    generateNoNoteMode: "No-note mode generated",
+    switchToWithNoteMode: "With-note mode enabled",
+    markTwitterDmSent: "Twitter/X DM marked as sent",
+    markTwitterFollowupSent: "Twitter/X follow-up marked as sent",
+    markAccepted: "Prospect marked as accepted",
+    archiveDeclined: "Prospect archived as declined",
+    markConnectionSentWithNote: "Connection marked as sent with note",
+    markConnectionSentWithoutNote: "Connection marked as sent without note",
+    markReportSent: "Report marked as sent",
+    markFollowupSent: "Follow-up marked as sent",
+    skip: "Prospect skipped",
+    saveForLater: "Prospect saved for later",
+    archiveProspect: "Prospect archived",
+    reopenConversation: "Conversation reopened",
+    markReplySent: "Response marked as sent",
+  };
+  return messages[intent] || `${label} done`;
+}
+
+function actionToastError(intent: string, label: string) {
+  const messages: Record<string, string> = {
+    generateNoNoteMode: "Could not generate no-note mode",
+    switchToWithNoteMode: "Could not switch to with-note mode",
+    markTwitterDmSent: "Could not mark the DM as sent",
+    markTwitterFollowupSent: "Could not mark the follow-up as sent",
+    markAccepted: "Could not mark the prospect as accepted",
+    archiveDeclined: "Could not archive the declined prospect",
+    markConnectionSentWithNote: "Could not mark the connection as sent",
+    markConnectionSentWithoutNote: "Could not mark the no-note connection as sent",
+    markReportSent: "Could not mark the report as sent",
+    markFollowupSent: "Could not mark the follow-up as sent",
+    skip: "Could not skip the prospect",
+    saveForLater: "Could not save the prospect for later",
+    archiveProspect: "Could not archive the prospect",
+    reopenConversation: "Could not reopen the conversation",
+    markReplySent: "Could not mark the response as sent",
+  };
+  return messages[intent] || `Could not ${label.toLowerCase()}`;
+}
+
+function BriefTopicSuggestionSheet({ prospect }: { prospect: Prospect }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <Button type="button" variant="outline" size="sm">
+          <RefreshCw className="size-4" />
+          Refine topic
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="right" className="w-full sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle>Refine brief topic</SheetTitle>
+          <SheetDescription>
+            Ask for better brief angles from the latest captured data and your current brief.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="overflow-y-auto px-4 pb-4">
+          <BriefTopicSuggestionPanel prospect={prospect} onTopicApplied={() => setOpen(false)} />
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function PrimaryMessageRegenerationSheet({
+  prospect,
+  showConnectionNote,
+  connectionLocked,
+  reportLocked,
+  latestEvidence,
+}: {
+  prospect: Prospect;
+  showConnectionNote: boolean;
+  connectionLocked: boolean;
+  reportLocked: boolean;
+  latestEvidence: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <Button type="button" variant="outline" size="sm">
+          <RefreshCw className="size-4" />
+          Regenerate
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="right" className="w-full sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle>Regenerate main message</SheetTitle>
+          <SheetDescription>
+            Rewrite the main outreach message from scraped data, the current brief theme, and an optional hint.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="overflow-y-auto px-4 pb-4">
+          <PrimaryMessageRegenerationPanel
+            prospect={prospect}
+            showConnectionNote={showConnectionNote}
+            connectionLocked={connectionLocked}
+            reportLocked={reportLocked}
+            latestEvidence={latestEvidence}
+          />
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function BriefTopicSuggestionPanel({
+  prospect,
+  onTopicApplied,
+}: {
+  prospect: Prospect;
+  onTopicApplied?: () => void;
+}) {
+  const fetcher = useFetcher<ProspectActionResult>();
+  useFetcherToast(fetcher, {
+    success: (result) =>
+      isSuggestionResult(result)
+        ? `${result.suggestions.length} brief topic suggestion${result.suggestions.length > 1 ? "s" : ""} ready`
+        : null,
+    error: "Could not suggest brief topics",
+  });
+  const suggestions =
+    fetcher.data && isSuggestionResult(fetcher.data)
+      ? fetcher.data.suggestions
+      : [];
+  const submittedDirection = String(fetcher.formData?.get("direction") || "").trim();
+  const isPending = fetcher.state !== "idle";
+
+  return (
+    <div className="rounded-lg border bg-muted/30 p-4">
+      <div className="flex flex-col gap-1">
+        <p className="text-sm font-semibold">Need a better brief angle?</p>
+        <p className="text-sm text-muted-foreground">
+          Ask the app for 3 alternative topics from the latest captured evidence, with an optional
+          direction like “broader”, “more circular economy”, or “better for first outreach”.
+        </p>
+      </div>
+
+      <fetcher.Form method="post" className="mt-4 grid gap-3">
+        <input type="hidden" name="intent" value="suggestBriefTopics" />
+        <input type="hidden" name="prospectId" value={prospect.id} />
+        <div className="space-y-2">
+          <Label htmlFor="brief-direction">Angle or direction</Label>
+          <Textarea
+            id="brief-direction"
+            name="direction"
+            rows={2}
+            placeholder="Find a broader topic, more focused on circular economy and better for first outreach."
+            defaultValue={submittedDirection}
+            disabled={isPending}
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit" variant="outline" size="sm" disabled={isPending}>
+            {isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            {isPending ? "Suggesting..." : "Suggest better brief topics"}
+          </Button>
+        </div>
+      </fetcher.Form>
+
+      {suggestions.length ? (
+        <div className="mt-4 grid gap-3">
+          {suggestions.map((suggestion, index) => (
+            <div key={`${suggestion.topic}-${index}`} className="rounded-lg border bg-background p-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="info">{suggestion.topic}</Badge>
+                    {prospect.brief_topic?.toLowerCase() === suggestion.topic.toLowerCase() ? (
+                      <Badge variant="muted">current</Badge>
+                    ) : null}
+                  </div>
+                  <p className="text-sm text-muted-foreground">{suggestion.rationale}</p>
+                  {suggestion.preparationNotes ? (
+                    <p className="text-sm text-muted-foreground">
+                      Prep: {suggestion.preparationNotes}
+                    </p>
+                  ) : null}
+                </div>
+                <ApplySuggestedTopicButton
+                  prospectId={prospect.id}
+                  topic={suggestion.topic}
+                  preparationNotes={suggestion.preparationNotes}
+                  onApplied={onTopicApplied}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PrimaryMessageRegenerationPanel({
+  prospect,
+  showConnectionNote,
+  connectionLocked,
+  reportLocked,
+  latestEvidence,
+}: {
+  prospect: Prospect;
+  showConnectionNote: boolean;
+  connectionLocked: boolean;
+  reportLocked: boolean;
+  latestEvidence: boolean;
+}) {
+  const fetcher = useFetcher<ProspectActionResult>();
+  useFetcherToast(fetcher, {
+    success: "Main message regenerated",
+    error: "Could not regenerate the main message",
+  });
+  const isPending = fetcher.state !== "idle";
+  const primary = getPrimaryMessageConfig(prospect, {
+    showConnectionNote,
+    connectionLocked,
+    reportLocked,
+  });
+
+  return (
+    <fetcher.Form method="post" className="mb-4 rounded-lg border bg-muted/30 p-4">
+      <input type="hidden" name="intent" value="regenerateMessageWithHint" />
+      <input type="hidden" name="prospectId" value={prospect.id} />
+      <input type="hidden" name="messageType" value={primary.type} />
+      <div className="space-y-1">
+        <p className="text-sm font-semibold">Regenerate the main message</p>
+        <p className="text-sm text-muted-foreground">
+          {latestEvidence
+            ? `This rewrites ${primary.label.toLowerCase()} from the latest captured profile data, the current brief topic, and your optional hint.`
+            : `This rewrites ${primary.label.toLowerCase()} from the current prospect context, the current brief topic, and your optional hint.`}
+        </p>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="message-direction">Regenerate one message with a hint</Label>
+        <Textarea
+          id="message-direction"
+          name="direction"
+          rows={2}
+          placeholder="Add that Tempolis is based on public messages. Keep it natural and not too salesy."
+          disabled={isPending}
+        />
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Badge variant="muted">{primary.label}</Badge>
+        <Button
+          type="submit"
+          variant="outline"
+          size="sm"
+          disabled={primary.disabled || isPending}
+        >
+          {isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+          Regenerate main message
+        </Button>
+      </div>
+      {primary.disabled ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          This message is already locked because it has been sent.
+        </p>
+      ) : null}
+    </fetcher.Form>
+  );
+}
+
+function getPrimaryMessageConfig(
+  prospect: Prospect,
+  options: {
+    showConnectionNote: boolean;
+    connectionLocked: boolean;
+    reportLocked: boolean;
+  },
+) {
+  if (prospect.source_channel === "twitter") {
+    return {
+      type: "twitter_dm",
+      label: "Twitter/X DM",
+      disabled: Boolean(prospect.twitter_contacted_date),
+    } as const;
+  }
+
+  if (prospect.outreach_mode === "no_note") {
+    return {
+      type: "report_no_note",
+      label: "First message after acceptance",
+      disabled: options.reportLocked,
+    } as const;
+  }
+
+  if (options.showConnectionNote && !options.connectionLocked) {
+    return {
+      type: "connection",
+      label: "Connection note",
+      disabled: false,
+    } as const;
+  }
+
+  return {
+    type: "report",
+    label: "After acceptance message",
+    disabled: options.reportLocked,
+  } as const;
+}
+
+function BriefStrategyForm({ prospect }: { prospect: Prospect }) {
+  const fetcher = useFetcher<ProspectActionResult>();
+  useFetcherToast(fetcher, {
+    success: "Brief updated",
+    error: "Could not save the brief",
+  });
+  const isPending = fetcher.state !== "idle";
+
+  return (
+    <fetcher.Form method="post" className="space-y-3">
+      <input type="hidden" name="intent" value="updateBriefStrategy" />
+      <input type="hidden" name="prospectId" value={prospect.id} />
+      <div className="space-y-2">
+        <Label htmlFor="briefTopic">Topic</Label>
+        <Input
+          id="briefTopic"
+          name="briefTopic"
+          defaultValue={prospect.brief_topic || ""}
+          required
+          maxLength={80}
+          placeholder="Narrative risk"
+          disabled={isPending}
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="briefPreparation">Preparation notes</Label>
+        <Textarea
+          id="briefPreparation"
+          name="briefPreparation"
+          defaultValue={prospect.preparation_notes || ""}
+          rows={4}
+          placeholder="Why this subject fits the profile, source signal, angle to prepare..."
+          disabled={isPending}
+        />
+      </div>
+      <Button type="submit" variant="outline" size="sm" disabled={isPending}>
+        {isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+        Save brief theme
+      </Button>
+    </fetcher.Form>
+  );
+}
+
+function ApplySuggestedTopicButton({
+  prospectId,
+  topic,
+  preparationNotes,
+  onApplied,
+}: {
+  prospectId: number;
+  topic: string;
+  preparationNotes: string;
+  onApplied?: () => void;
+}) {
+  const fetcher = useFetcher<ProspectActionResult>();
+  useFetcherToast(fetcher, {
+    success: "Brief topic applied",
+    error: "Could not apply the suggested topic",
+    onSuccess: () => onApplied?.(),
+  });
+  const isPending = fetcher.state !== "idle";
+
+  return (
+    <fetcher.Form method="post" className="shrink-0">
+      <input type="hidden" name="intent" value="updateBriefStrategy" />
+      <input type="hidden" name="prospectId" value={prospectId} />
+      <input type="hidden" name="briefTopic" value={topic} />
+      <input type="hidden" name="briefPreparation" value={preparationNotes} />
+      <Button type="submit" size="sm" disabled={isPending}>
+        {isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+        Use topic
+      </Button>
+    </fetcher.Form>
+  );
+}
+
+function BriefUrlInlineForm({ prospectId }: { prospectId: number }) {
+  const fetcher = useFetcher<ProspectActionResult>();
+  useFetcherToast(fetcher, {
+    success: "Brief URL saved",
+    error: "Could not save the brief URL",
+  });
+  const isPending = fetcher.state !== "idle";
+
+  return (
+    <fetcher.Form method="post" className="flex gap-2">
+      <input type="hidden" name="intent" value="addBriefUrl" />
+      <input type="hidden" name="prospectId" value={prospectId} />
+      <Input
+        name="sharedUrl"
+        type="url"
+        required
+        placeholder="https://tempolis.com/share/..."
+        className="flex-1"
+        disabled={isPending}
+      />
+      <Button type="submit" variant="outline" size="sm" disabled={isPending}>
+        {isPending ? <Loader2 className="size-4 animate-spin" /> : <LinkIcon className="size-4" />}
+        Add URL
+      </Button>
+    </fetcher.Form>
+  );
+}
+
+function ProspectNotesForm({ prospect }: { prospect: Prospect }) {
+  const fetcher = useFetcher<ProspectActionResult>();
+  useFetcherToast(fetcher, {
+    success: "Note saved",
+    error: "Could not save the note",
+  });
+  const isPending = fetcher.state !== "idle";
+
+  return (
+    <fetcher.Form method="post" className="space-y-3">
+      <input type="hidden" name="intent" value="updateProspectNotes" />
+      <input type="hidden" name="prospectId" value={prospect.id} />
+      {prospect.notes ? (
+        <div className="rounded-md border bg-muted/30 p-3 text-sm">
+          <p className="whitespace-pre-wrap">{prospect.notes}</p>
+        </div>
+      ) : null}
+      <div className="space-y-2">
+        <Label htmlFor="notes">Note</Label>
+        <Textarea
+          id="notes"
+          name="notes"
+          defaultValue={prospect.notes || ""}
+          rows={3}
+          placeholder="Tiny internal note, context, next angle..."
+          disabled={isPending}
+        />
+      </div>
+      <Button type="submit" variant="outline" size="sm" disabled={isPending}>
+        {isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+        Save note
+      </Button>
+    </fetcher.Form>
   );
 }
 
@@ -692,8 +1158,14 @@ function MessageEditor({
 }) {
   if (!content) return null;
   if (locked) return <ReadonlyMessage title={title} content={content} />;
+  const fetcher = useFetcher<ProspectActionResult>();
+  useFetcherToast(fetcher, {
+    success: `${title} saved`,
+    error: `Could not save ${title.toLowerCase()}`,
+  });
+  const isPending = fetcher.state !== "idle";
   return (
-    <Form method="post" className="rounded-lg border bg-muted/30 p-4">
+    <fetcher.Form method="post" className="rounded-lg border bg-muted/30 p-4">
       <input type="hidden" name="intent" value="updateMessage" />
       <input type="hidden" name="prospectId" value={prospectId} />
       <input type="hidden" name="messageType" value={type} />
@@ -701,8 +1173,8 @@ function MessageEditor({
         <p className="text-sm font-semibold">{title}</p>
         <div className="flex gap-2">
           <CopyButton label="Copy" value={content} compact />
-          <Button type="submit" variant="outline" size="sm" className="h-8">
-            <Save className="size-3.5" />
+          <Button type="submit" variant="outline" size="sm" className="h-8" disabled={isPending}>
+            {isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
             Save
           </Button>
         </div>
@@ -712,8 +1184,9 @@ function MessageEditor({
         defaultValue={content}
         rows={Math.max(3, Math.min(8, content.split("\n").length + 1))}
         className="mt-3"
+        disabled={isPending}
       />
-    </Form>
+    </fetcher.Form>
   );
 }
 
@@ -738,10 +1211,16 @@ function ReadonlyMessage({ title, content }: { title: string; content: string })
 
 function ReplyPanel({ prospect, replies }: { prospect: Prospect; replies: Reply[] }) {
   const latest = replies[0];
+  const fetcher = useFetcher<ProspectActionResult>();
+  useFetcherToast(fetcher, {
+    success: "Reply saved and draft generated",
+    error: "Could not save the reply",
+  });
+  const isPending = fetcher.state !== "idle";
   return (
     <div className="grid gap-4">
       {latest ? <ReplyEditor prospect={prospect} reply={latest} /> : null}
-      <Form method="post" className="rounded-lg border bg-muted/30 p-4">
+      <fetcher.Form method="post" className="rounded-lg border bg-muted/30 p-4">
         <input type="hidden" name="intent" value="addProspectReply" />
         <input type="hidden" name="prospectId" value={prospect.id} />
         <div className="space-y-2">
@@ -752,6 +1231,7 @@ function ReplyPanel({ prospect, replies }: { prospect: Prospect; replies: Reply[
             rows={4}
             required
             placeholder="Paste the LinkedIn reply here..."
+            disabled={isPending}
           />
         </div>
         <div className="mt-3 space-y-2">
@@ -761,6 +1241,7 @@ function ReplyPanel({ prospect, replies }: { prospect: Prospect; replies: Reply[
             name="responseDirection"
             rows={3}
             placeholder="Optional. Example: thank them, clarify this is early, ask what signal would make it useful for their team..."
+            disabled={isPending}
           />
         </div>
         <div className="mt-3 space-y-2">
@@ -770,18 +1251,31 @@ function ReplyPanel({ prospect, replies }: { prospect: Prospect; replies: Reply[
             name="suggestedResponse"
             rows={4}
             placeholder="Optional manual override. Leave empty and the app will generate a draft from the direction above."
+            disabled={isPending}
           />
         </div>
-        <Button type="submit" className="mt-3">
-          <MessageSquareReply className="size-4" />
+        <Button type="submit" className="mt-3" disabled={isPending}>
+          {isPending ? <Loader2 className="size-4 animate-spin" /> : <MessageSquareReply className="size-4" />}
           Save and draft response
         </Button>
-      </Form>
+      </fetcher.Form>
     </div>
   );
 }
 
 function ReplyEditor({ prospect, reply }: { prospect: Prospect; reply: Reply }) {
+  const regenerateFetcher = useFetcher<ProspectActionResult>();
+  const updateFetcher = useFetcher<ProspectActionResult>();
+  useFetcherToast(regenerateFetcher, {
+    success: "Reply draft regenerated",
+    error: "Could not regenerate the reply draft",
+  });
+  useFetcherToast(updateFetcher, {
+    success: "Reply draft saved",
+    error: "Could not save the reply draft",
+  });
+  const isRegenerating = regenerateFetcher.state !== "idle";
+  const isSaving = updateFetcher.state !== "idle";
   return (
     <div className="rounded-lg border bg-muted/30 p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -799,7 +1293,7 @@ function ReplyEditor({ prospect, reply }: { prospect: Prospect; reply: Reply }) 
         {reply.inbound_content}
       </p>
       {!reply.sent_at ? (
-        <Form method="post" className="mt-3 rounded-md border bg-background p-3">
+        <regenerateFetcher.Form method="post" className="mt-3 rounded-md border bg-background p-3">
           <input type="hidden" name="intent" value="regenerateReplyResponse" />
           <input type="hidden" name="prospectId" value={prospect.id} />
           <input type="hidden" name="replyId" value={reply.id} />
@@ -810,15 +1304,16 @@ function ReplyEditor({ prospect, reply }: { prospect: Prospect; reply: Reply }) 
               name="responseDirection"
               rows={3}
               placeholder="Example: answer warmly, say the brief is a prototype, ask if a competitor comparison would be more useful..."
+              disabled={isRegenerating}
             />
           </div>
-          <Button type="submit" variant="outline" size="sm" className="mt-3">
-            <RefreshCw className="size-3.5" />
+          <Button type="submit" variant="outline" size="sm" className="mt-3" disabled={isRegenerating}>
+            {isRegenerating ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
             Regenerate draft
           </Button>
-        </Form>
+        </regenerateFetcher.Form>
       ) : null}
-      <Form method="post" className="mt-3">
+      <updateFetcher.Form method="post" className="mt-3">
         <input type="hidden" name="intent" value="updateReplyResponse" />
         <input type="hidden" name="prospectId" value={prospect.id} />
         <input type="hidden" name="replyId" value={reply.id} />
@@ -826,8 +1321,8 @@ function ReplyEditor({ prospect, reply }: { prospect: Prospect; reply: Reply }) 
           <p className="text-sm font-semibold">Response to send</p>
           <div className="flex gap-2">
             <CopyButton label="Copy" value={reply.suggested_response || ""} compact />
-            <Button type="submit" variant="outline" size="sm" className="h-8">
-              <Save className="size-3.5" />
+            <Button type="submit" variant="outline" size="sm" className="h-8" disabled={isSaving || Boolean(reply.sent_at)}>
+              {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
               Save
             </Button>
           </div>
@@ -837,10 +1332,10 @@ function ReplyEditor({ prospect, reply }: { prospect: Prospect; reply: Reply }) 
           defaultValue={reply.suggested_response || ""}
           rows={5}
           required
-          disabled={Boolean(reply.sent_at)}
+          disabled={Boolean(reply.sent_at) || isSaving}
           className="mt-2"
         />
-      </Form>
+      </updateFetcher.Form>
       {!reply.sent_at ? (
         <div className="mt-3">
           <ActionButton
@@ -889,8 +1384,14 @@ function ActionButton({
   variant?: "default" | "outline" | "destructive" | "secondary";
   extra?: Record<string, string>;
 }) {
+  const fetcher = useFetcher<ProspectActionResult>();
+  useFetcherToast(fetcher, {
+    success: () => actionToastSuccess(intent, label),
+    error: () => actionToastError(intent, label),
+  });
+  const isPending = fetcher.state !== "idle";
   return (
-    <Form method="post">
+    <fetcher.Form method="post">
       <input type="hidden" name="intent" value={intent} />
       <input type="hidden" name="prospectId" value={prospectId} />
       {extra
@@ -898,11 +1399,11 @@ function ActionButton({
             <input key={key} type="hidden" name={key} value={value} />
           ))
         : null}
-      <Button type="submit" variant={variant} size="sm">
-        {icon}
+      <Button type="submit" variant={variant} size="sm" disabled={isPending}>
+        {isPending ? <Loader2 className="size-4 animate-spin" /> : icon}
         {label}
       </Button>
-    </Form>
+    </fetcher.Form>
   );
 }
 

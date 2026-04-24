@@ -1,7 +1,7 @@
 import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { PassThrough } from "node:stream";
 import { createReadableStreamFromReadable } from "@react-router/node";
-import { ServerRouter, UNSAFE_withComponentProps, Outlet, UNSAFE_withErrorBoundaryProps, useRouteError, isRouteErrorResponse, Meta, Links, ScrollRestoration, Scripts, redirect, useLocation, useNavigate, useFetcher, NavLink, useLoaderData, Link as Link$1, Form, useSearchParams, useActionData, useNavigation, useParams, data } from "react-router";
+import { ServerRouter, UNSAFE_withComponentProps, Outlet, UNSAFE_withErrorBoundaryProps, useRouteError, isRouteErrorResponse, Meta, Links, ScrollRestoration, Scripts, redirect, useLocation, useNavigate, useFetcher, NavLink, useLoaderData, Link as Link$1, Form, useSearchParams, useRevalidator, data, useActionData, useNavigation, useParams } from "react-router";
 import { isbot } from "isbot";
 import { renderToPipeableStream } from "react-dom/server";
 import * as React from "react";
@@ -10,7 +10,6 @@ import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { Slot } from "@radix-ui/react-slot";
 import { cva } from "class-variance-authority";
-import * as PopoverPrimitive from "@radix-ui/react-popover";
 import * as SheetPrimitive from "@radix-ui/react-dialog";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Toaster as Toaster$1, toast } from "sonner";
@@ -610,35 +609,6 @@ function Input({ className, type, ...props }) {
     }
   );
 }
-function Popover(props) {
-  return /* @__PURE__ */ jsx(PopoverPrimitive.Root, { "data-slot": "popover", ...props });
-}
-function PopoverAnchor(props) {
-  return /* @__PURE__ */ jsx(PopoverPrimitive.Anchor, { "data-slot": "popover-anchor", ...props });
-}
-function PopoverContent({
-  className,
-  align = "center",
-  sideOffset = 4,
-  ...props
-}) {
-  return /* @__PURE__ */ jsx(PopoverPrimitive.Portal, { children: /* @__PURE__ */ jsx(
-    PopoverPrimitive.Content,
-    {
-      "data-slot": "popover-content",
-      align,
-      sideOffset,
-      className: cn(
-        "z-50 w-72 origin-[var(--radix-popover-content-transform-origin)] rounded-md border bg-popover p-0 text-popover-foreground shadow-md outline-hidden",
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-        "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
-        "data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-        className
-      ),
-      ...props
-    }
-  ) });
-}
 function Sheet(props) {
   return /* @__PURE__ */ jsx(SheetPrimitive.Root, { "data-slot": "sheet", ...props });
 }
@@ -695,6 +665,42 @@ function SheetContent({
       }
     )
   ] });
+}
+function SheetHeader({ className, ...props }) {
+  return /* @__PURE__ */ jsx(
+    "div",
+    {
+      "data-slot": "sheet-header",
+      className: cn("flex flex-col gap-1.5 p-4", className),
+      ...props
+    }
+  );
+}
+function SheetTitle({
+  className,
+  ...props
+}) {
+  return /* @__PURE__ */ jsx(
+    SheetPrimitive.Title,
+    {
+      "data-slot": "sheet-title",
+      className: cn("text-foreground font-semibold", className),
+      ...props
+    }
+  );
+}
+function SheetDescription({
+  className,
+  ...props
+}) {
+  return /* @__PURE__ */ jsx(
+    SheetPrimitive.Description,
+    {
+      "data-slot": "sheet-description",
+      className: cn("text-muted-foreground text-sm", className),
+      ...props
+    }
+  );
 }
 function DropdownMenu(props) {
   return /* @__PURE__ */ jsx(DropdownMenuPrimitive.Root, { "data-slot": "dropdown-menu", ...props });
@@ -844,31 +850,14 @@ function SidebarContent({
   const searchFetcher = useFetcher();
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
-  const [results, setResults] = useState([]);
-  const [openSearch, setOpenSearch] = useState(false);
+  const highlightedIndexRef = useRef(0);
   const searchContainerRef = useRef(null);
   const activeInitial = (activeWorkspace.product_name || activeWorkspace.name || "?").slice(0, 1).toUpperCase();
   const basePath = `/${activeWorkspace.slug}`;
   const todoSummaryBySlug = new Map(todoSummaries.map((summary) => [summary.workspace_slug, summary]));
   const trimmedQuery = query.trim();
-  const showSearchResults = openSearch && trimmedQuery.length >= 2;
-  useEffect(() => {
-    if (trimmedQuery.length < 2) {
-      setOpenSearch(false);
-      setResults([]);
-      return;
-    }
-    setOpenSearch(true);
-    const timeout = window.setTimeout(() => {
-      searchFetcher.load(`/api/prospect-search?q=${encodeURIComponent(trimmedQuery)}`);
-    }, 150);
-    return () => window.clearTimeout(timeout);
-  }, [trimmedQuery, searchFetcher]);
-  useEffect(() => {
-    if (searchFetcher.data?.prospects) {
-      setResults(searchFetcher.data.prospects);
-    }
-  }, [searchFetcher.data]);
+  const results = searchFetcher.data?.prospects ?? [];
+  const showSearchResults = trimmedQuery.length >= 2;
   const emptySearch = showSearchResults && searchFetcher.state === "idle" && results.length === 0;
   const loadingSearch = showSearchResults && searchFetcher.state !== "idle";
   const activeResultId = useMemo(() => {
@@ -876,12 +865,17 @@ function SidebarContent({
     return parts[1] === "prospects" ? Number(parts[2] || "") : null;
   }, [location.pathname]);
   useEffect(() => {
-    setHighlightedIndex(0);
+    if (trimmedQuery.length < 2) return;
+    const timeout = window.setTimeout(() => {
+      searchFetcher.load(`/api/prospect-search?q=${encodeURIComponent(trimmedQuery)}`);
+    }, 150);
+    return () => window.clearTimeout(timeout);
   }, [trimmedQuery]);
   useEffect(() => {
-    if (results.length === 0) return;
-    setHighlightedIndex((current) => Math.min(current, results.length - 1));
-  }, [results]);
+    const next = 0;
+    highlightedIndexRef.current = next;
+    setHighlightedIndex(next);
+  }, [trimmedQuery]);
   useEffect(() => {
     if (!showSearchResults) return;
     function handlePointer(event) {
@@ -892,10 +886,15 @@ function SidebarContent({
     document.addEventListener("mousedown", handlePointer);
     return () => document.removeEventListener("mousedown", handlePointer);
   }, [showSearchResults]);
+  function moveHighlight(delta) {
+    if (results.length === 0) return;
+    const next = (highlightedIndexRef.current + delta + results.length) % results.length;
+    highlightedIndexRef.current = next;
+    setHighlightedIndex(next);
+  }
   function openProspect(prospect) {
     setQuery("");
-    setResults([]);
-    setOpenSearch(false);
+    highlightedIndexRef.current = 0;
     setHighlightedIndex(0);
     navigate(`/${prospect.workspace_slug}/prospects/${prospect.id}`);
     onNavigate?.();
@@ -911,45 +910,29 @@ function SidebarContent({
         /* @__PURE__ */ jsx("p", { className: "truncate text-[11px] text-sidebar-foreground/55", children: "Internal CRM" })
       ] })
     ] }),
-    /* @__PURE__ */ jsx("div", { ref: searchContainerRef, className: "px-2", children: /* @__PURE__ */ jsxs(Popover, { open: showSearchResults, onOpenChange: (nextOpen) => {
-      if (!nextOpen) {
-        setOpenSearch(false);
-        setQuery("");
-        setResults([]);
-      }
-    }, children: [
-      /* @__PURE__ */ jsx(PopoverAnchor, { asChild: true, children: /* @__PURE__ */ jsxs("div", { className: "relative", children: [
+    /* @__PURE__ */ jsxs("div", { ref: searchContainerRef, className: "relative px-2", children: [
+      /* @__PURE__ */ jsxs("div", { className: "relative", children: [
         /* @__PURE__ */ jsx(Search, { className: "pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-sidebar-foreground/45" }),
         /* @__PURE__ */ jsx(
           Input,
           {
             value: query,
             onChange: (event) => setQuery(event.currentTarget.value),
-            onFocus: () => {
-              if (trimmedQuery.length >= 2) setOpenSearch(true);
-            },
             onKeyDown: (event) => {
-              if (!showSearchResults || results.length === 0) {
-                if (event.key === "Escape") {
-                  setQuery("");
-                  setOpenSearch(false);
-                }
+              if (event.key === "Escape") {
+                setQuery("");
                 return;
               }
+              if (!showSearchResults || results.length === 0) return;
               if (event.key === "ArrowDown") {
                 event.preventDefault();
-                setHighlightedIndex((current) => (current + 1) % results.length);
+                moveHighlight(1);
               } else if (event.key === "ArrowUp") {
                 event.preventDefault();
-                setHighlightedIndex((current) => (current - 1 + results.length) % results.length);
+                moveHighlight(-1);
               } else if (event.key === "Enter") {
                 event.preventDefault();
-                openProspect(results[highlightedIndex] || results[0]);
-              } else if (event.key === "Escape") {
-                event.preventDefault();
-                setQuery("");
-                setOpenSearch(false);
-                setResults([]);
+                openProspect(results[highlightedIndexRef.current] ?? results[0]);
               }
             },
             placeholder: "Find a prospect...",
@@ -959,15 +942,12 @@ function SidebarContent({
             className: "h-9 border-sidebar-border bg-background pl-9 text-sm"
           }
         )
-      ] }) }),
-      /* @__PURE__ */ jsx(
-        PopoverContent,
+      ] }),
+      showSearchResults ? /* @__PURE__ */ jsx(
+        "div",
         {
           id: "sidebar-prospect-search-results",
-          align: "start",
-          side: "bottom",
-          sideOffset: 8,
-          className: "w-[var(--radix-popover-trigger-width)] overflow-hidden border-sidebar-border p-0",
+          className: "absolute left-2 right-2 top-full z-50 mt-2 overflow-hidden rounded-md border border-sidebar-border bg-popover text-popover-foreground shadow-md",
           children: /* @__PURE__ */ jsxs("div", { className: "max-h-80 overflow-y-auto p-1", children: [
             results.map((prospect, index) => {
               const isActiveResult = prospect.id === activeResultId && prospect.workspace_slug === activeWorkspace.slug;
@@ -979,6 +959,7 @@ function SidebarContent({
                   role: "option",
                   "aria-selected": isHighlighted,
                   onMouseEnter: () => setHighlightedIndex(index),
+                  onMouseDown: (e) => e.preventDefault(),
                   onClick: () => openProspect(prospect),
                   className: cn(
                     "flex w-full items-start justify-between gap-3 rounded-md px-2.5 py-2 text-left transition-colors",
@@ -1006,8 +987,8 @@ function SidebarContent({
             ] })
           ] })
         }
-      )
-    ] }) }),
+      ) : null
+    ] }),
     /* @__PURE__ */ jsxs("div", { className: "px-2 py-2", children: [
       /* @__PURE__ */ jsx("label", { htmlFor: "workspace-switcher", className: "sr-only", children: "Workspace" }),
       /* @__PURE__ */ jsx(
@@ -1148,6 +1129,22 @@ let database;
 let databaseReady;
 let databaseUsesEmbeddedReplica = false;
 let syncInProgress = null;
+const INACTIVE_PROSPECT_STATUSES = ["saved_for_later", "skipped", "archived_declined", "archived"];
+function activeProspectWhereSql(alias) {
+  const prefix = alias ? `${alias}.` : "";
+  return `
+    ${prefix}status NOT IN (${INACTIVE_PROSPECT_STATUSES.map(() => "?").join(", ")})
+    AND NOT (${prefix}status = 'to_contact' AND COALESCE(${prefix}contact_now, 0) = 0)
+  `;
+}
+function activeProspectWhereArgs() {
+  return [...INACTIVE_PROSPECT_STATUSES];
+}
+function isActiveProspectForKpi(prospect) {
+  return !INACTIVE_PROSPECT_STATUSES.includes(
+    prospect.status
+  ) && !(prospect.status === "to_contact" && !prospect.contact_now);
+}
 async function getWorkspaces() {
   return await all("SELECT * FROM workspaces ORDER BY name");
 }
@@ -1214,71 +1211,54 @@ async function searchProspectsGlobally(query, limit = 8) {
 }
 async function getWorkspaceTodoSummaries() {
   const today = todayIso();
-  const rows = await all(`
-    SELECT
-      w.id AS workspace_id,
-      w.slug AS workspace_slug,
-      w.name AS workspace_name,
-      (
-        SELECT COUNT(*)
+  const workspaces = await getWorkspaces();
+  const summaries = await Promise.all(workspaces.map(async (workspace) => {
+    const [prospectRows, tasks] = await Promise.all([
+      all(`
+        SELECT
+          p.*,
+          w.slug AS workspace_slug,
+          w.name AS workspace_name,
+          b.topic AS brief_topic,
+          b.preparation_notes,
+          b.shared_url,
+          cm.content AS connection_message,
+          rm.content AS report_message,
+          nrm.content AS no_note_report_message,
+          fm.content AS followup_message,
+          tdm.content AS twitter_dm_message,
+          tfm.content AS twitter_followup_message
         FROM prospects p
-        WHERE p.workspace_id = w.id
-          AND p.status = 'accepted'
-          AND p.report_sent_date IS NULL
-      ) + (
-        SELECT COUNT(*)
+        JOIN workspaces w ON w.id = p.workspace_id
+        LEFT JOIN briefs b ON b.prospect_id = p.id
+        LEFT JOIN messages cm ON cm.prospect_id = p.id AND cm.type = 'connection'
+        LEFT JOIN messages rm ON rm.prospect_id = p.id AND rm.type = 'report'
+        LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
+        LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
+        LEFT JOIN messages tdm ON tdm.prospect_id = p.id AND tdm.type = 'twitter_dm'
+        LEFT JOIN messages tfm ON tfm.prospect_id = p.id AND tfm.type = 'twitter_followup'
+        WHERE p.workspace_id = ?
+      `, [workspace.id]),
+      all(`
+        SELECT t.*, p.name, p.profile_url, p.source_channel, p.twitter_url
         FROM tasks t
-        JOIN prospects p ON p.id = t.prospect_id
-        WHERE p.workspace_id = w.id
+        LEFT JOIN prospects p ON p.id = t.prospect_id
+        WHERE p.workspace_id = ?
           AND t.status = 'open'
-          AND t.type IN ('send_followup', 'send_twitter_followup')
-          AND t.due_date IS NOT NULL
-          AND t.due_date <= ?
-      ) + (
-        SELECT COUNT(*)
-        FROM tasks t
-        JOIN prospects p ON p.id = t.prospect_id
-        WHERE p.workspace_id = w.id
-          AND t.status = 'open'
-          AND t.type IN ('send_connection', 'send_twitter_dm')
-      ) + (
-        SELECT COUNT(*)
-        FROM briefs b
-        JOIN prospects p ON p.id = b.prospect_id
-        WHERE p.workspace_id = w.id
-          AND p.status <> 'connection_sent'
-          AND p.status IN ('accepted')
-          AND b.topic IS NOT NULL
-          AND trim(b.topic) <> ''
-          AND (b.shared_url IS NULL OR trim(b.shared_url) = '')
-      ) + (
-        SELECT COUNT(*)
-        FROM prospects p
-        WHERE p.workspace_id = w.id
-          AND p.status = 'connection_sent'
-          AND (
-            p.pending_checked_at IS NULL
-            OR p.pending_checked_at <= datetime('now', '-4 hours')
-          )
-      ) AS todo_count,
-      (
-        SELECT COUNT(*)
-        FROM tasks t
-        JOIN prospects p ON p.id = t.prospect_id
-        WHERE p.workspace_id = w.id
-          AND t.status = 'open'
-          AND t.type IN ('send_followup', 'send_twitter_followup')
-          AND t.due_date IS NOT NULL
-          AND t.due_date < ?
-      ) AS overdue_count
-    FROM workspaces w
-    ORDER BY w.name
-  `, [today, today]);
-  return rows.map((row) => ({
-    ...row,
-    todo_count: Number(row.todo_count || 0),
-    overdue_count: Number(row.overdue_count || 0)
+      `, [workspace.id])
+    ]);
+    const prospects = prospectRows.map(withDerivedMessages);
+    const sections = buildDashboardSections(today, prospects, tasks, []);
+    const todoItems = buildDashboardTodoItems({ today, prospects, tasks, sections });
+    return {
+      workspace_id: workspace.id,
+      workspace_slug: workspace.slug,
+      workspace_name: workspace.name,
+      todo_count: todoItems.length,
+      overdue_count: todoItems.filter((item) => item.kind === "followup" && item.task?.due_date && item.task.due_date < today).length
+    };
   }));
+  return summaries;
 }
 async function getWorkspaceDocs(workspaceId) {
   return await all("SELECT * FROM workspace_docs WHERE workspace_id = ? ORDER BY type", [workspaceId]);
@@ -1427,27 +1407,45 @@ async function setProspectOutreachPreference(id, mode) {
 async function getExtensionDashboard(workspaceId) {
   const workspace = workspaceId ? await one("SELECT * FROM workspaces WHERE id = ?", [workspaceId]) : await getActiveWorkspace();
   if (!workspace) throw new Error("Workspace not found.");
-  const pendingCheckDelayHours = 4;
+  const today = todayIso();
   const pendingConnections = await all(`
-    SELECT id, name, position, profile_url, outreach_mode, connection_sent_date, pending_checked_at, connection_last_state
+    SELECT
+      prospects.id,
+      prospects.name,
+      prospects.position,
+      prospects.profile_url,
+      prospects.outreach_mode,
+      prospects.connection_sent_date,
+      prospects.pending_checked_at,
+      prospects.connection_last_state,
+      wt.created_at AS watch_created_at
     FROM prospects
-    WHERE status = 'connection_sent'
-      AND workspace_id = ?
-      AND (
-        pending_checked_at IS NULL
-        OR pending_checked_at <= datetime('now', ?)
-      )
+    LEFT JOIN tasks wt ON wt.prospect_id = prospects.id AND wt.type = 'watch_acceptance' AND wt.status = 'open'
+    WHERE prospects.status = 'connection_sent'
+      AND prospects.workspace_id = ?
     ORDER BY
-      CASE WHEN pending_checked_at IS NULL THEN 0 ELSE 1 END,
-      pending_checked_at,
-      COALESCE(connection_sent_date, '9999-12-31'),
-      name
-  `, [workspace.id, `-${pendingCheckDelayHours} hours`]);
+      CASE WHEN prospects.pending_checked_at IS NULL THEN 0 ELSE 1 END,
+      prospects.pending_checked_at,
+      COALESCE(prospects.connection_sent_date, '9999-12-31'),
+      prospects.name
+  `, [workspace.id]);
+  const duePendingConnections = pendingConnections.filter(
+    (prospect) => isPendingCheckDue(prospect, prospect.watch_created_at ? { created_at: prospect.watch_created_at } : void 0, today)
+  );
+  const standbyPendingConnections = pendingConnections.filter(
+    (prospect) => pendingReviewBucket(
+      prospect,
+      prospect.watch_created_at ? { created_at: prospect.watch_created_at } : void 0
+    ) === "standby"
+  );
   return {
-    today: todayIso(),
+    today,
     workspace,
-    pendingCheckDelayHours,
-    pendingConnections
+    pendingCheckDelayHours: 4,
+    standbyReviewDelayHours: 72,
+    longTailAfterHours: 48,
+    pendingConnections: duePendingConnections,
+    standbyPendingConnections
   };
 }
 async function syncProspectConnectionState(id, state) {
@@ -1595,30 +1593,26 @@ async function getDashboard(workspaceInput) {
     getDashboardStats(today, workspace.id)
   ]);
   const prospects = prospectRows.map(withDerivedMessages);
+  const sections = buildDashboardSections(today, prospects, tasks, events);
+  const todoItems = buildDashboardTodoItems({ today, prospects, tasks, sections });
+  const activeProspectCount = prospects.filter(isActiveProspectForKpi).length;
+  const pendingChecksDue = todoItems.filter((item) => item.kind === "pending").length;
   return {
     today,
     workspace,
     prospects,
+    activeProspectCount,
     tasks,
     events,
-    stats,
-    sections: {
-      toConnect: tasks.filter((item) => item.status === "open" && item.type === "send_connection"),
-      twitterToContact: tasks.filter((item) => item.status === "open" && item.type === "send_twitter_dm"),
-      acceptedReport: prospects.filter((item) => item.status === "accepted" && !item.report_sent_date),
-      missingBriefUrls: prospects.filter(
-        (item) => ["connection_sent", "accepted"].includes(item.status) && Boolean(item.brief_topic) && !item.shared_url
-      ),
-      followupsDue: tasks.filter(
-        (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date <= today
-      ),
-      followupsScheduled: tasks.filter(
-        (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date > today
-      ),
-      conversationsActive: prospects.filter((item) => item.status === "conversation_active"),
-      pendingConnections: prospects.filter((item) => item.status === "connection_sent"),
-      doneToday: events.filter((item) => String(item.happened_at).slice(0, 10) === today)
-    }
+    todoItems,
+    stats: {
+      ...stats,
+      processHealth: {
+        ...stats.processHealth,
+        pendingChecksDue
+      }
+    },
+    sections
   };
 }
 async function getDashboardStats(today, workspaceId) {
@@ -1673,30 +1667,34 @@ async function getDashboardStats(today, workspaceId) {
       SELECT COUNT(*) AS count
       FROM prospects
       WHERE workspace_id = ?
+        AND ${activeProspectWhereSql()}
         AND date(created_at) < ?
-    `, [workspaceId, firstDay7]),
+    `, [workspaceId, ...activeProspectWhereArgs(), firstDay7]),
     all(`
       SELECT date(created_at) AS date, COUNT(*) AS count
       FROM prospects
       WHERE workspace_id = ?
+        AND ${activeProspectWhereSql()}
         AND date(created_at) >= ?
         AND date(created_at) <= ?
       GROUP BY date(created_at)
-    `, [workspaceId, firstDay7, today]),
+    `, [workspaceId, ...activeProspectWhereArgs(), firstDay7, today]),
     one(`
       SELECT COUNT(*) AS count
       FROM prospects
       WHERE workspace_id = ?
+        AND ${activeProspectWhereSql()}
         AND date(created_at) < ?
-    `, [workspaceId, firstDay30]),
+    `, [workspaceId, ...activeProspectWhereArgs(), firstDay30]),
     all(`
       SELECT date(created_at) AS date, COUNT(*) AS count
       FROM prospects
       WHERE workspace_id = ?
+        AND ${activeProspectWhereSql()}
         AND date(created_at) >= ?
         AND date(created_at) <= ?
       GROUP BY date(created_at)
-    `, [workspaceId, firstDay30, today]),
+    `, [workspaceId, ...activeProspectWhereArgs(), firstDay30, today]),
     getFunnelStats(workspaceId, firstDay7, today),
     getFunnelStats(workspaceId, firstDay30, today),
     getRateStats(workspaceId, firstDay7, today),
@@ -1749,8 +1747,131 @@ async function getDashboardStats(today, workspaceId) {
     topicPerformance
   };
 }
+function buildDashboardSections(today, prospects, tasks, events) {
+  const watchAcceptanceTasksByProspectId = new Map(
+    tasks.filter((task) => task.status === "open" && task.type === "watch_acceptance" && task.prospect_id).map((task) => [task.prospect_id, task])
+  );
+  const pendingConnections = prospects.filter((item) => item.status === "connection_sent");
+  return {
+    toConnect: tasks.filter((item) => item.status === "open" && item.type === "send_connection"),
+    twitterToContact: tasks.filter((item) => item.status === "open" && item.type === "send_twitter_dm"),
+    acceptedReport: prospects.filter((item) => item.status === "accepted" && !item.report_sent_date),
+    missingBriefUrls: prospects.filter(
+      (item) => ["connection_sent", "accepted"].includes(item.status) && Boolean(item.brief_topic) && !item.shared_url
+    ),
+    followupsDue: tasks.filter(
+      (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date <= today
+    ),
+    followupsScheduled: tasks.filter(
+      (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date > today
+    ),
+    conversationsActive: prospects.filter((item) => item.status === "conversation_active"),
+    pendingConnections: pendingConnections.filter(
+      (prospect) => pendingReviewBucket(prospect, watchAcceptanceTasksByProspectId.get(prospect.id)) === "active"
+    ),
+    pendingConnectionsStandby: pendingConnections.filter(
+      (prospect) => pendingReviewBucket(prospect, watchAcceptanceTasksByProspectId.get(prospect.id)) === "standby"
+    ),
+    doneToday: events.filter((item) => String(item.happened_at).slice(0, 10) === today)
+  };
+}
+function buildDashboardTodoItems({
+  today,
+  prospects,
+  tasks,
+  sections
+}) {
+  const prospectsById = new Map(prospects.map((prospect) => [prospect.id, prospect]));
+  const watchAcceptanceTasksByProspectId = new Map(
+    tasks.filter((task) => task.status === "open" && task.type === "watch_acceptance" && task.prospect_id).map((task) => [task.prospect_id, task])
+  );
+  const todos = [];
+  for (const prospect of sections.acceptedReport) {
+    todos.push({
+      key: `accepted-report-${prospect.id}`,
+      priority: 10,
+      title: `Send first message to ${prospect.name}`,
+      detail: `${prospect.brief_topic || "No brief topic"} · connection accepted`,
+      kind: "message",
+      prospect
+    });
+  }
+  for (const task of sections.followupsDue) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : void 0;
+    todos.push({
+      key: `followup-${task.id}`,
+      priority: task.due_date && task.due_date < today ? 20 : 25,
+      title: `Send follow-up to ${task.name || prospect?.name || "prospect"}`,
+      detail: task.due_date && task.due_date < today ? `Overdue since ${task.due_date}` : `Due ${task.due_date || "today"}`,
+      kind: "followup",
+      prospect,
+      task
+    });
+  }
+  for (const task of sections.toConnect) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : void 0;
+    if (!prospect) continue;
+    todos.push({
+      key: `connect-${task.id}`,
+      priority: 30,
+      title: `Send connection request to ${prospect.name}`,
+      detail: `${serverOutreachModeLabel(prospect)} · ${prospect.brief_topic || "no brief topic"}`,
+      kind: "connection",
+      prospect,
+      task
+    });
+  }
+  for (const task of sections.twitterToContact) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : void 0;
+    if (!prospect) continue;
+    todos.push({
+      key: `twitter-${task.id}`,
+      priority: 30,
+      title: `Send Twitter/X DM to ${prospect.name}`,
+      detail: `${prospect.brief_topic || "no brief topic"} · manual first touch`,
+      kind: "twitter",
+      prospect,
+      task
+    });
+  }
+  for (const prospect of sections.missingBriefUrls.filter((item) => item.status !== "connection_sent")) {
+    todos.push({
+      key: `brief-url-${prospect.id}`,
+      priority: 40,
+      title: `Add brief URL for ${prospect.name}`,
+      detail: `Prepare ${prospect.brief_topic || "brief"} before first message`,
+      kind: "brief",
+      prospect
+    });
+  }
+  for (const prospect of sections.pendingConnections) {
+    const watchTask = watchAcceptanceTasksByProspectId.get(prospect.id);
+    if (!isPendingCheckDue(prospect, watchTask, today)) continue;
+    todos.push({
+      key: `pending-check-${prospect.id}`,
+      priority: prospect.pending_checked_at ? 60 : 50,
+      title: `Check pending connection for ${prospect.name}`,
+      detail: prospect.pending_checked_at ? `Last checked ${formatRelativeAgeForDashboard(prospect.pending_checked_at)}` : `Never checked · sent ${prospect.connection_sent_date || "unknown date"}`,
+      kind: "pending",
+      prospect
+    });
+  }
+  for (const prospect of sections.pendingConnectionsStandby) {
+    const watchTask = watchAcceptanceTasksByProspectId.get(prospect.id);
+    if (!isPendingCheckDue(prospect, watchTask, today)) continue;
+    todos.push({
+      key: `pending-standby-${prospect.id}`,
+      priority: prospect.pending_checked_at ? 72 : 68,
+      title: `Review standby pending for ${prospect.name}`,
+      detail: prospect.pending_checked_at ? `Standby pending · last checked ${formatRelativeAgeForDashboard(prospect.pending_checked_at)}` : `Standby pending · sent ${prospect.connection_sent_date || "unknown date"}`,
+      kind: "pending",
+      prospect
+    });
+  }
+  return todos.sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
+}
 async function getFunnelStats(workspaceId, firstDay, today) {
-  const [prospectsAdded, firstTouchesSent, linkedinAccepted, reportsSent, repliesReceived, activeConversations] = await Promise.all([
+  const [prospectsAdded, firstTouchesSent, linkedinAccepted, reportsSent, prospectsReplied, activeConversations] = await Promise.all([
     countOne(`
       SELECT COUNT(*) AS count
       FROM prospects
@@ -1777,14 +1898,7 @@ async function getFunnelStats(workspaceId, firstDay, today) {
         AND date(accepted_date) <= ?
     `, [workspaceId, firstDay, today]),
     countReportsSent(workspaceId, firstDay, today),
-    countOne(`
-      SELECT COUNT(*) AS count
-      FROM replies r
-      JOIN prospects p ON p.id = r.prospect_id
-      WHERE p.workspace_id = ?
-        AND date(r.created_at) >= ?
-        AND date(r.created_at) <= ?
-    `, [workspaceId, firstDay, today]),
+    countReplyingProspects(workspaceId, firstDay, today),
     countOne(`
       SELECT COUNT(*) AS count
       FROM prospects
@@ -1794,10 +1908,10 @@ async function getFunnelStats(workspaceId, firstDay, today) {
         AND date(updated_at) <= ?
     `, [workspaceId, firstDay, today])
   ]);
-  return { prospectsAdded, firstTouchesSent, linkedinAccepted, reportsSent, repliesReceived, activeConversations };
+  return { prospectsAdded, firstTouchesSent, linkedinAccepted, reportsSent, prospectsReplied, activeConversations };
 }
 async function getRateStats(workspaceId, firstDay, today) {
-  const [linkedinConnectionsSent, linkedinAccepted, firstMessagesSent, repliesReceived, activeConversations] = await Promise.all([
+  const [linkedinConnectionsSent, linkedinAccepted, firstMessagesSent, prospectsReplied, activeConversations] = await Promise.all([
     countOne(`
       SELECT COUNT(*) AS count
       FROM events e
@@ -1826,14 +1940,7 @@ async function getRateStats(workspaceId, firstDay, today) {
         AND date(e.happened_at) >= ?
         AND date(e.happened_at) <= ?
     `, [workspaceId, firstDay, today]),
-    countOne(`
-      SELECT COUNT(*) AS count
-      FROM replies r
-      JOIN prospects p ON p.id = r.prospect_id
-      WHERE p.workspace_id = ?
-        AND date(r.created_at) >= ?
-        AND date(r.created_at) <= ?
-    `, [workspaceId, firstDay, today]),
+    countReplyingProspects(workspaceId, firstDay, today),
     countOne(`
       SELECT COUNT(*) AS count
       FROM prospects
@@ -1845,11 +1952,11 @@ async function getRateStats(workspaceId, firstDay, today) {
   ]);
   return {
     linkedinAcceptRate: ratio(linkedinAccepted, linkedinConnectionsSent),
-    replyRate: ratio(repliesReceived, firstMessagesSent),
-    activeConversationRate: ratio(activeConversations, repliesReceived),
+    replyRate: ratio(prospectsReplied, firstMessagesSent),
+    activeConversationRate: ratio(activeConversations, prospectsReplied),
     linkedinConnectionsSent,
     firstMessagesSent,
-    repliesReceived
+    prospectsReplied
   };
 }
 async function getProcessHealth(workspaceId, today) {
@@ -1917,27 +2024,28 @@ async function getChannelBreakdown(workspaceId, firstDay, today) {
       COUNT(DISTINCT CASE
         WHEN date(r.created_at) >= ?
           AND date(r.created_at) <= ?
-        THEN r.id
-      END) AS replies,
+        THEN r.prospect_id
+      END) AS prospects_replied,
       COUNT(DISTINCT CASE WHEN p.status IN ('conversation_active', 'reply_sent') THEN p.id END) AS active_conversations
     FROM prospects p
     LEFT JOIN events e ON e.prospect_id = p.id
     LEFT JOIN replies r ON r.prospect_id = p.id
     WHERE p.workspace_id = ?
+      AND ${activeProspectWhereSql("p")}
     GROUP BY p.source_channel
-  `, [firstDay, today, firstDay, today, workspaceId]);
+  `, [firstDay, today, firstDay, today, workspaceId, ...activeProspectWhereArgs()]);
   const byChannel = new Map(rows.map((row) => [row.channel || "linkedin", row]));
   return ["linkedin", "twitter"].map((channel) => {
     const row = byChannel.get(channel);
     const firstTouches = Number(row?.first_touches || 0);
-    const replies = Number(row?.replies || 0);
+    const prospectsReplied = Number(row?.prospects_replied || 0);
     return {
       channel,
       prospects: Number(row?.prospects || 0),
       firstTouches,
-      replies,
+      prospectsReplied,
       activeConversations: Number(row?.active_conversations || 0),
-      replyRate: ratio(replies, firstTouches)
+      replyRate: ratio(prospectsReplied, firstTouches)
     };
   });
 }
@@ -1955,30 +2063,41 @@ async function getTopicPerformance(workspaceId, firstDay, today) {
       COUNT(DISTINCT CASE
         WHEN date(r.created_at) >= ?
           AND date(r.created_at) <= ?
-        THEN r.id
-      END) AS replies,
+        THEN r.prospect_id
+      END) AS prospects_replied,
       COUNT(DISTINCT CASE WHEN p.status IN ('conversation_active', 'reply_sent') THEN p.id END) AS active_conversations
     FROM prospects p
     LEFT JOIN briefs b ON b.prospect_id = p.id
     LEFT JOIN events e ON e.prospect_id = p.id
     LEFT JOIN replies r ON r.prospect_id = p.id
     WHERE p.workspace_id = ?
+      AND ${activeProspectWhereSql("p")}
     GROUP BY topic
-    ORDER BY replies DESC, first_touches DESC, prospects DESC, topic
+    ORDER BY prospects_replied DESC, first_touches DESC, prospects DESC, topic
     LIMIT 8
-  `, [firstDay, today, firstDay, today, workspaceId]);
+  `, [firstDay, today, firstDay, today, workspaceId, ...activeProspectWhereArgs()]);
   return rows.map((row) => {
     const firstTouches = Number(row.first_touches || 0);
-    const replies = Number(row.replies || 0);
+    const prospectsReplied = Number(row.prospects_replied || 0);
     return {
       topic: row.topic,
       prospects: Number(row.prospects || 0),
       firstTouches,
-      replies,
+      prospectsReplied,
       activeConversations: Number(row.active_conversations || 0),
-      replyRate: ratio(replies, firstTouches)
+      replyRate: ratio(prospectsReplied, firstTouches)
     };
   });
+}
+async function countReplyingProspects(workspaceId, firstDay, today) {
+  return await countOne(`
+    SELECT COUNT(DISTINCT r.prospect_id) AS count
+    FROM replies r
+    JOIN prospects p ON p.id = r.prospect_id
+    WHERE p.workspace_id = ?
+      AND date(r.created_at) >= ?
+      AND date(r.created_at) <= ?
+  `, [workspaceId, firstDay, today]);
 }
 async function countReportsSent(workspaceId, firstDay, today) {
   return await countOne(`
@@ -2064,6 +2183,31 @@ async function runProspectAction(formData, workspaceId) {
       await upsertGeneratedMessage(id, "twitter_followup", generated.twitterFollowupMessage, null);
     }
     await addEvent(id, "messages_regenerated_from_evidence", "Messages regenerated from latest captured evidence.", today);
+    return;
+  }
+  if (intent === "regenerateMessageWithHint") {
+    const messageType = String(formData.get("messageType") || "").trim();
+    const direction = String(formData.get("direction") || "").trim();
+    const generated = await generateMessagesFromLatestEvidence(id, direction);
+    const targetMap = {
+      connection: generated.connectionMessage?.slice(0, 300),
+      report: generated.reportMessage,
+      report_no_note: generated.noNoteReportMessage,
+      followup: generated.followupMessage,
+      twitter_dm: generated.twitterDmMessage,
+      twitter_followup: generated.twitterFollowupMessage
+    };
+    const nextContent = targetMap[messageType];
+    if (!nextContent) {
+      throw new Error(`No regenerated content available for ${messageType}`);
+    }
+    await upsertGeneratedMessage(id, messageType, nextContent, null);
+    await addEvent(
+      id,
+      "message_regenerated_with_hint",
+      direction ? `${messageType} regenerated with hint: ${direction}` : `${messageType} regenerated from latest captured evidence.`,
+      today
+    );
     return;
   }
   try {
@@ -2678,6 +2822,28 @@ async function seedWorkspaceDefaults(db) {
       defaultModel,
       0.2
     );
+    await seedPromptTemplate(
+      db,
+      workspace.id,
+      "linkedin",
+      "brief_topic_refinement",
+      isNarralens2 ? "LinkedIn brief topic refinement - Narralens" : "LinkedIn brief topic refinement",
+      DEFAULT_NO_NOTE_SYSTEM_PROMPT,
+      isNarralens2 ? DEFAULT_NARRALENS_BRIEF_TOPIC_REFINEMENT_USER_PROMPT : DEFAULT_BRIEF_TOPIC_REFINEMENT_USER_PROMPT,
+      defaultModel,
+      0.3
+    );
+    await seedPromptTemplate(
+      db,
+      workspace.id,
+      "twitter",
+      "brief_topic_refinement",
+      isNarralens2 ? "Twitter/X brief topic refinement - Narralens" : "Twitter/X brief topic refinement",
+      DEFAULT_NO_NOTE_SYSTEM_PROMPT,
+      isNarralens2 ? DEFAULT_NARRALENS_BRIEF_TOPIC_REFINEMENT_USER_PROMPT : DEFAULT_BRIEF_TOPIC_REFINEMENT_USER_PROMPT,
+      defaultModel,
+      0.3
+    );
   }
 }
 async function seedPromptTemplate(db, workspaceId, channel, purpose, name, systemPrompt, userPrompt, model, temperature) {
@@ -2760,6 +2926,9 @@ function todayIso() {
   });
   return formatter.format(/* @__PURE__ */ new Date());
 }
+const PENDING_ACTIVE_RECHECK_MS = 4 * 60 * 60 * 1e3;
+const PENDING_LONG_TAIL_AFTER_MS = 48 * 60 * 60 * 1e3;
+const PENDING_STANDBY_RECHECK_MS = 72 * 60 * 60 * 1e3;
 function addDaysIso(dateIso, days) {
   const date = /* @__PURE__ */ new Date(`${dateIso}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
@@ -2770,6 +2939,50 @@ function shortDayLabel(dateIso) {
 }
 function escapeLike(value) {
   return value.replace(/[\\%_]/g, "\\$&");
+}
+function pendingTodoAgeMs(prospect, watchTask, today) {
+  if (prospect.pending_checked_at) return dateAgeMs(prospect.pending_checked_at);
+  if (watchTask?.created_at) return dateAgeMs(watchTask.created_at);
+  if (prospect.connection_sent_date && prospect.connection_sent_date < today) return PENDING_ACTIVE_RECHECK_MS;
+  if (prospect.connection_sent_date) return 0;
+  return null;
+}
+function pendingSentAgeMs(prospect, watchTask) {
+  if (watchTask?.created_at) return dateAgeMs(watchTask.created_at);
+  return dateAgeMs(prospect.connection_sent_date);
+}
+function pendingReviewBucket(prospect, watchTask) {
+  const sentAge = pendingSentAgeMs(prospect, watchTask);
+  return sentAge !== null && sentAge >= PENDING_LONG_TAIL_AFTER_MS ? "standby" : "active";
+}
+function pendingReviewDelayMs(prospect, watchTask) {
+  return pendingReviewBucket(prospect, watchTask) === "standby" ? PENDING_STANDBY_RECHECK_MS : PENDING_ACTIVE_RECHECK_MS;
+}
+function isPendingCheckDue(prospect, watchTask, today) {
+  const pendingAge = pendingTodoAgeMs(prospect, watchTask, today);
+  if (pendingAge === null) return false;
+  return pendingAge >= pendingReviewDelayMs(prospect, watchTask);
+}
+function dateAgeMs(value) {
+  if (!value) return null;
+  const normalized = value.includes("T") ? value : value.includes(" ") ? `${value.replace(" ", "T")}Z` : `${value}T00:00:00Z`;
+  const timestamp = Date.parse(normalized);
+  if (Number.isNaN(timestamp)) return null;
+  return Date.now() - timestamp;
+}
+function formatRelativeAgeForDashboard(value) {
+  const ageMs = dateAgeMs(value);
+  if (ageMs === null) return value;
+  const minutes = Math.max(0, Math.round(ageMs / 6e4));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+function serverOutreachModeLabel(prospect) {
+  if (prospect.source_channel === "twitter") return "Twitter/X";
+  if (prospect.outreach_mode === "no_note") return "LinkedIn no-note";
+  return "LinkedIn with note";
 }
 function withDerivedMessages(prospect) {
   const canDeriveOutreachCopy = prospect.status !== "skipped" && prospect.status !== "saved_for_later" && !(prospect.status === "to_contact" && !prospect.contact_now);
@@ -2892,7 +3105,7 @@ async function generateNoNoteRewrite(prospectId) {
   });
   return normalizeNoNoteRewrite(parsed, prospect, workspace.product_name);
 }
-async function generateMessagesFromLatestEvidence(prospectId) {
+async function generateMessagesFromLatestEvidence(prospectId, direction = "") {
   loadLocalEnv$1();
   const detail = await getProspectDetail(prospectId);
   if (!detail) throw new Error("Prospect not found");
@@ -2921,7 +3134,14 @@ async function generateMessagesFromLatestEvidence(prospectId) {
     summaryText: "No extension capture is stored for this prospect yet. Use the current prospect fields as fallback context.",
     payload: null
   };
-  const prompt = renderMessageRegenerationPrompt(template.user_prompt, workspace, docs, prospect, evidence);
+  const prompt = renderMessageRegenerationPrompt(
+    template.user_prompt,
+    workspace,
+    docs,
+    prospect,
+    evidence,
+    direction
+  );
   const model = template.model || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -2956,14 +3176,91 @@ async function generateMessagesFromLatestEvidence(prospectId) {
     workspaceId: workspace.id,
     promptTemplateId: template.id,
     prospectId: prospect.id,
-    inputJson: { prompt, prospectId: prospect.id, evidenceId: latestEvidence?.id || null },
+    inputJson: { prompt, prospectId: prospect.id, evidenceId: latestEvidence?.id || null, direction },
     outputJson: parsed,
     model
   });
   return normalizeMessageRegeneration(parsed, prospect, workspace.product_name, workspace.default_language || "en");
 }
-function renderMessageRegenerationPrompt(template, workspace, docs, prospect, evidence) {
-  return template.replaceAll("{{productName}}", workspace.product_name).replaceAll("{{workspaceName}}", workspace.name).replaceAll("{{defaultLanguage}}", workspace.default_language || "en").replaceAll("{{workspaceDocs}}", formatWorkspaceDocs$1(docs)).replaceAll("{{prospectJson}}", JSON.stringify({
+async function generateBriefTopicSuggestions(prospectId, direction) {
+  loadLocalEnv$1();
+  const detail = await getProspectDetail(prospectId);
+  if (!detail) throw new Error("Prospect not found");
+  const { prospect, latestEvidence } = detail;
+  const workspace = prospect.workspace_id ? await one("SELECT * FROM workspaces WHERE id = ?", [prospect.workspace_id]) : await getActiveWorkspace();
+  if (!workspace) throw new Error("Workspace not found.");
+  const channel = prospect.source_channel === "twitter" ? "twitter" : "linkedin";
+  const [template, docs] = await Promise.all([
+    getActivePromptTemplate(workspace.id, channel, "brief_topic_refinement"),
+    getWorkspaceDocs(workspace.id)
+  ]);
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    return fallbackBriefTopicSuggestions(prospect, direction, workspace.product_name);
+  }
+  const evidence = latestEvidence ? {
+    id: latestEvidence.id,
+    sourceChannel: latestEvidence.source_channel,
+    captureSource: latestEvidence.capture_source,
+    createdAt: latestEvidence.created_at,
+    summaryText: latestEvidence.summary_text,
+    payload: safeJsonParse(latestEvidence.payload_json)
+  } : {
+    sourceChannel: channel,
+    captureSource: "fallback_current_prospect",
+    summaryText: "No extension capture is stored for this prospect yet. Use the current prospect fields as fallback context.",
+    payload: null
+  };
+  const prompt = renderBriefTopicRefinementPrompt(
+    template.user_prompt,
+    workspace,
+    docs,
+    prospect,
+    evidence,
+    direction
+  );
+  const model = template.model || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:4377",
+      "X-Title": "Outreach App"
+    },
+    body: JSON.stringify({
+      model,
+      temperature: template.temperature,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: template.system_prompt
+        },
+        { role: "user", content: prompt }
+      ]
+    })
+  });
+  if (!response.ok) {
+    const detailText = await response.text();
+    throw new Error(`OpenRouter request failed (${response.status}): ${detailText.slice(0, 600)}`);
+  }
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenRouter returned an empty response.");
+  const parsed = parseJson$1(content);
+  await recordPromptRun({
+    workspaceId: workspace.id,
+    promptTemplateId: template.id,
+    prospectId: prospect.id,
+    inputJson: { prompt, prospectId: prospect.id, evidenceId: latestEvidence?.id || null, direction },
+    outputJson: parsed,
+    model
+  });
+  return normalizeBriefTopicSuggestions(parsed, prospect, direction, workspace.product_name);
+}
+function renderMessageRegenerationPrompt(template, workspace, docs, prospect, evidence, direction = "") {
+  const basePrompt = template.replaceAll("{{productName}}", workspace.product_name).replaceAll("{{workspaceName}}", workspace.name).replaceAll("{{defaultLanguage}}", workspace.default_language || "en").replaceAll("{{workspaceDocs}}", formatWorkspaceDocs$1(docs)).replaceAll("{{prospectJson}}", JSON.stringify({
     id: prospect.id,
     name: prospect.name,
     position: prospect.position,
@@ -2987,6 +3284,29 @@ function renderMessageRegenerationPrompt(template, workspace, docs, prospect, ev
     twitterDm: prospect.twitter_dm_message,
     twitterFollowup: prospect.twitter_followup_message
   }, null, 2));
+  if (basePrompt.includes("{{direction}}")) {
+    return basePrompt.replaceAll("{{direction}}", direction || "(none provided)");
+  }
+  return `${basePrompt}
+
+USER DIRECTION
+${direction || "(none provided)"}`;
+}
+function renderBriefTopicRefinementPrompt(template, workspace, docs, prospect, evidence, direction) {
+  return template.replaceAll("{{productName}}", workspace.product_name).replaceAll("{{workspaceName}}", workspace.name).replaceAll("{{defaultLanguage}}", workspace.default_language || "en").replaceAll("{{workspaceDocs}}", formatWorkspaceDocs$1(docs)).replaceAll("{{prospectJson}}", JSON.stringify({
+    id: prospect.id,
+    name: prospect.name,
+    position: prospect.position,
+    about: prospect.about,
+    profileUrl: prospect.profile_url,
+    sourceChannel: prospect.source_channel,
+    priorityTag: prospect.priority_tag,
+    wave: prospect.wave,
+    rationale: prospect.rationale,
+    recommendedTemplate: prospect.recommended_template,
+    currentBriefTopic: prospect.brief_topic,
+    currentBriefPreparation: prospect.preparation_notes
+  }, null, 2)).replaceAll("{{evidenceJson}}", JSON.stringify(evidence, null, 2)).replaceAll("{{direction}}", direction || "(none provided)");
 }
 function renderNoNoteRewritePrompt(template, workspace, docs, prospect) {
   return template.replaceAll("{{productName}}", workspace.product_name).replaceAll("{{workspaceName}}", workspace.name).replaceAll("{{defaultLanguage}}", workspace.default_language || "en").replaceAll("{{workspaceDocs}}", formatWorkspaceDocs$1(docs)).replaceAll("{{prospectJson}}", JSON.stringify({
@@ -3065,6 +3385,60 @@ function normalizeMessageRegeneration(value, prospect, productName = "Tempolis",
       briefTopic: prospect.brief_topic
     })
   };
+}
+function normalizeBriefTopicSuggestions(value, prospect, direction, productName = "Tempolis") {
+  const rawSuggestions = Array.isArray(value?.suggestions) ? value.suggestions : [];
+  const normalized = rawSuggestions.map((item) => {
+    const candidate = item;
+    const topic = trimWords(String(candidate.topic || ""), 3);
+    const rationale = String(candidate.rationale || "").trim();
+    const preparationNotes = String(candidate.preparationNotes || "").trim();
+    if (!topic) return null;
+    return {
+      topic,
+      rationale: rationale || `Alternative angle for ${prospect.name}.`,
+      preparationNotes
+    };
+  }).filter((item) => Boolean(item));
+  if (normalized.length) {
+    return dedupeBriefTopicSuggestions(normalized).slice(0, 3);
+  }
+  return fallbackBriefTopicSuggestions(prospect, direction, productName);
+}
+function dedupeBriefTopicSuggestions(items2) {
+  const seen = /* @__PURE__ */ new Set();
+  return items2.filter((item) => {
+    const key = item.topic.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+function fallbackBriefTopicSuggestions(prospect, direction, productName = "Tempolis") {
+  const currentTopic = trimWords(prospect.brief_topic || "", 3);
+  const directionText = direction.toLowerCase();
+  const variants = /* @__PURE__ */ new Set();
+  if (currentTopic) {
+    variants.add(currentTopic);
+    const parts = currentTopic.split(/\s+/);
+    if (parts.length >= 2) variants.add(parts.slice(-2).join(" "));
+    if (parts.length >= 2) variants.add(parts.slice(0, 2).join(" "));
+    if (/\beu\b/i.test(currentTopic)) variants.add(trimWords(currentTopic.replace(/\beu\b/gi, ""), 3));
+    if (/\bcircular\b/i.test(currentTopic)) variants.add(trimWords(currentTopic.replace(/\bcircular\b/gi, ""), 3));
+  }
+  if (directionText.includes("circular")) variants.add("circular economy");
+  if (directionText.includes("econom")) variants.add("market dynamics");
+  if (directionText.includes("broader") && currentTopic) variants.add(trimWords(currentTopic.replace(/\b(circular|digital|strategic|public)\b/gi, ""), 3));
+  if (!variants.size) {
+    variants.add(isNarralensProduct$1(productName) ? "campaign narrative" : "EU regulation");
+    variants.add(isNarralensProduct$1(productName) ? "competitor moves" : "policy strategy");
+    variants.add(isNarralensProduct$1(productName) ? "brand reaction" : "market access");
+  }
+  return Array.from(variants).map((topic) => trimWords(topic, 3)).filter(Boolean).filter((topic, index, all2) => all2.indexOf(topic) === index).slice(0, 3).map((topic) => ({
+    topic,
+    rationale: currentTopic && topic !== currentTopic ? `A more usable first-contact angle than "${currentTopic}" for this profile.` : `Alternative topic generated from the current profile context.`,
+    preparationNotes: direction ? `Direction requested: ${direction}` : `Refined from the current profile context and existing brief angle.`
+  }));
 }
 function sanitizeGeneratedMessage(value, fallback, options2 = {}) {
   const cleanValue = value.trim();
@@ -3203,6 +3577,83 @@ function trimWords(value, max) {
 const DEFAULT_LINKEDIN_BATCH_SYSTEM_PROMPT = "You are a strict JSON-producing outreach analyst. Return only valid JSON. Never include markdown.";
 const DEFAULT_TWITTER_BATCH_SYSTEM_PROMPT = "You are a strict JSON-producing outreach analyst. Return only valid JSON. Never include markdown.";
 const DEFAULT_NO_NOTE_SYSTEM_PROMPT = "You are a strict JSON-producing outreach copywriter. Return only valid JSON. Never include markdown.";
+const DEFAULT_BRIEF_TOPIC_REFINEMENT_USER_PROMPT = `
+Suggest better {{productName}} brief topics for this prospect.
+
+TASK
+- Use the workspace docs, current prospect context, current brief topic, and latest captured evidence.
+- Return exactly 3 alternative brief topics.
+- Write all rationales and preparation notes in {{defaultLanguage}} by default.
+- Each topic must be 1 to 3 words only.
+- For Tempolis-style work, prefer concrete policy/public-affairs subjects that could realistically make a strong first brief.
+- A good topic is often broader and more usable than the first detected niche, but still specific enough to feel intentional.
+- Treat reposts, likes, comments, and visible activity as signals of interest only, not proof that the prospect owns that topic professionally.
+- If the user gives a direction, follow it.
+- Do not suggest abstract labels like "public policy", "communications", "regulation", or "strategy" on their own.
+- Do not simply echo the current topic unless it is still clearly one of the top 3 options.
+- For each suggestion, include short preparation notes explaining what angle to take.
+
+OUTPUT JSON SHAPE
+{
+  "suggestions": [
+    {
+      "topic": string,
+      "rationale": string,
+      "preparationNotes": string
+    }
+  ]
+}
+
+WORKSPACE DOCS
+{{workspaceDocs}}
+
+PROSPECT CONTEXT
+{{prospectJson}}
+
+LATEST CAPTURED EVIDENCE
+{{evidenceJson}}
+
+USER DIRECTION
+{{direction}}
+`;
+const DEFAULT_NARRALENS_BRIEF_TOPIC_REFINEMENT_USER_PROMPT = `
+Suggest better {{productName}} brief topics for this prospect.
+
+TASK
+- Use the workspace docs, current prospect context, current brief topic, and latest captured evidence.
+- Return exactly 3 alternative brief topics.
+- Write all rationales and preparation notes in {{defaultLanguage}} by default.
+- Each topic must be 1 to 3 words only.
+- Prefer topics that look like real {{productName}} searches: a brand, company, campaign, launch, competitor, public figure, controversy, platform change, or concrete narrative debate.
+- Avoid abstract topics like brand perception, communications, marketing, narrative intelligence, or campaign monitoring.
+- If the user gives a direction, follow it.
+- Treat reposts, likes, and visible activity as interest/public context only, not proof that the prospect professionally owns that topic.
+- Each suggestion should feel credible for a first brief and specific enough to discuss with the prospect.
+- For each suggestion, include short preparation notes explaining what angle to take.
+
+OUTPUT JSON SHAPE
+{
+  "suggestions": [
+    {
+      "topic": string,
+      "rationale": string,
+      "preparationNotes": string
+    }
+  ]
+}
+
+WORKSPACE DOCS
+{{workspaceDocs}}
+
+PROSPECT CONTEXT
+{{prospectJson}}
+
+LATEST CAPTURED EVIDENCE
+{{evidenceJson}}
+
+USER DIRECTION
+{{direction}}
+`;
 const DEFAULT_LINKEDIN_BATCH_USER_PROMPT = `
 Analyze this new {{productName}} LinkedIn outreach batch.
 
@@ -3552,8 +4003,8 @@ async function action$6({
 }
 const home = UNSAFE_withComponentProps(function Home() {
   const data2 = useLoaderData();
-  const activeProspects = data2.prospects.filter((prospect) => !["saved_for_later", "skipped", "archived_declined", "archived"].includes(prospect.status));
-  const todoItems = buildTodoItems(data2);
+  const prospectsInProgress = data2.prospects.filter((prospect) => !["saved_for_later", "skipped", "archived_declined", "archived"].includes(prospect.status));
+  const todoItems = data2.todoItems;
   useEffect(() => {
     if (window.location.hash !== "#todos") return;
     window.requestAnimationFrame(() => {
@@ -3595,15 +4046,18 @@ const home = UNSAFE_withComponentProps(function Home() {
           storageKey: "pipeline-now",
           title: "Pipeline now",
           detail: "Current workload for this workspace.",
-          count: data2.prospects.length,
+          count: data2.activeProspectCount,
           children: /* @__PURE__ */ jsxs("div", {
-            className: "grid gap-3 sm:grid-cols-2 lg:grid-cols-4",
+            className: "grid gap-3 sm:grid-cols-2 xl:grid-cols-5",
             children: [/* @__PURE__ */ jsx(KpiCard, {
-              label: "Prospects",
-              value: data2.prospects.length
+              label: "Active prospects",
+              value: data2.activeProspectCount
             }), /* @__PURE__ */ jsx(KpiCard, {
               label: "Pending connections",
               value: data2.sections.pendingConnections.length
+            }), /* @__PURE__ */ jsx(KpiCard, {
+              label: "Pending on standby",
+              value: data2.sections.pendingConnectionsStandby.length
             }), /* @__PURE__ */ jsx(KpiCard, {
               label: "Reports to send",
               value: data2.sections.acceptedReport.length
@@ -3651,7 +4105,7 @@ const home = UNSAFE_withComponentProps(function Home() {
               totalLabel: "total"
             }), /* @__PURE__ */ jsx(StatsChart, {
               title: "Prospect base",
-              detail: "Total prospects in CRM over the last 7 days.",
+              detail: "Active prospect base over the last 7 days.",
               points: data2.stats.prospects7d,
               totalLabel: "today"
             })]
@@ -3669,7 +4123,7 @@ const home = UNSAFE_withComponentProps(function Home() {
           storageKey: "conversion-rates",
           title: "Conversion rates",
           detail: "7-day and 30-day conversion health.",
-          count: data2.stats.rates7d.repliesReceived,
+          count: data2.stats.rates7d.prospectsReplied,
           children: /* @__PURE__ */ jsxs("div", {
             className: "grid gap-3 md:grid-cols-3",
             children: [/* @__PURE__ */ jsx(RateCard, {
@@ -3686,7 +4140,7 @@ const home = UNSAFE_withComponentProps(function Home() {
               title: "Active conversation rate",
               rate7d: data2.stats.rates7d.activeConversationRate,
               rate30d: data2.stats.rates30d.activeConversationRate,
-              denominator: `${data2.stats.rates7d.repliesReceived} replies 7d · ${data2.stats.rates30d.repliesReceived} replies 30d`
+              denominator: `${data2.stats.rates7d.prospectsReplied} replied prospects 7d · ${data2.stats.rates30d.prospectsReplied} replied prospects 30d`
             })]
           })
         }), /* @__PURE__ */ jsx(CollapsibleDashboardSection, {
@@ -3809,10 +4263,18 @@ const home = UNSAFE_withComponentProps(function Home() {
                   prospect,
                   detail: `${outreachModeLabel$1(prospect)} · sent ${prospect.connection_sent_date || "today"} · watch acceptance`
                 })
+              }), /* @__PURE__ */ jsx(TodayPanel, {
+                storageKey: "pending-standby",
+                title: "Pending on standby",
+                items: data2.sections.pendingConnectionsStandby,
+                children: (prospect) => /* @__PURE__ */ jsx(DashboardTaskLink, {
+                  prospect,
+                  detail: `${outreachModeLabel$1(prospect)} · sent ${prospect.connection_sent_date || "today"} · long-tail review cadence`
+                })
               })]
             })]
           }), /* @__PURE__ */ jsx(ProspectsInProgressPanel, {
-            prospects: activeProspects
+            prospects: prospectsInProgress
           })]
         }), /* @__PURE__ */ jsx("aside", {
           className: "h-fit lg:sticky lg:top-6",
@@ -3940,83 +4402,6 @@ function DashboardTaskLink({
       })]
     })]
   });
-}
-function buildTodoItems(data2) {
-  const prospectsById = new Map(data2.prospects.map((prospect) => [prospect.id, prospect]));
-  const watchAcceptanceTasksByProspectId = new Map(data2.tasks.filter((task) => task.status === "open" && task.type === "watch_acceptance" && task.prospect_id).map((task) => [task.prospect_id, task]));
-  const todos = [];
-  for (const prospect of data2.sections.acceptedReport) {
-    todos.push({
-      key: `accepted-report-${prospect.id}`,
-      priority: 10,
-      title: `Send first message to ${prospect.name}`,
-      detail: `${prospect.brief_topic || "No brief topic"} · connection accepted`,
-      kind: "message",
-      prospect
-    });
-  }
-  for (const task of data2.sections.followupsDue) {
-    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : void 0;
-    todos.push({
-      key: `followup-${task.id}`,
-      priority: task.due_date && task.due_date < data2.today ? 20 : 25,
-      title: `Send follow-up to ${task.name || prospect?.name || "prospect"}`,
-      detail: task.due_date && task.due_date < data2.today ? `Overdue since ${task.due_date}` : `Due ${task.due_date || "today"}`,
-      kind: "followup",
-      prospect,
-      task
-    });
-  }
-  for (const task of data2.sections.toConnect) {
-    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : void 0;
-    if (!prospect) continue;
-    todos.push({
-      key: `connect-${task.id}`,
-      priority: 30,
-      title: `Send connection request to ${prospect.name}`,
-      detail: `${outreachModeLabel$1(prospect)} · ${prospect.brief_topic || "no brief topic"}`,
-      kind: "connection",
-      prospect,
-      task
-    });
-  }
-  for (const task of data2.sections.twitterToContact) {
-    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : void 0;
-    if (!prospect) continue;
-    todos.push({
-      key: `twitter-${task.id}`,
-      priority: 30,
-      title: `Send Twitter/X DM to ${prospect.name}`,
-      detail: `${prospect.brief_topic || "no brief topic"} · manual first touch`,
-      kind: "twitter",
-      prospect,
-      task
-    });
-  }
-  for (const prospect of data2.sections.missingBriefUrls.filter((item) => item.status !== "connection_sent")) {
-    todos.push({
-      key: `brief-url-${prospect.id}`,
-      priority: 40,
-      title: `Add brief URL for ${prospect.name}`,
-      detail: `Prepare ${prospect.brief_topic || "brief"} before first message`,
-      kind: "brief",
-      prospect
-    });
-  }
-  for (const prospect of data2.sections.pendingConnections) {
-    const watchTask = watchAcceptanceTasksByProspectId.get(prospect.id);
-    const pendingAge = pendingTodoAgeMs(prospect, watchTask);
-    if (pendingAge !== null && pendingAge < 4 * 60 * 60 * 1e3) continue;
-    todos.push({
-      key: `pending-check-${prospect.id}`,
-      priority: prospect.pending_checked_at ? 60 : 50,
-      title: `Check pending connection for ${prospect.name}`,
-      detail: prospect.pending_checked_at ? `Last checked ${formatRelativeAge(prospect.pending_checked_at)}` : `Never checked · sent ${prospect.connection_sent_date || "unknown date"}`,
-      kind: "pending",
-      prospect
-    });
-  }
-  return todos.sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
 }
 function TodoItemRow({
   item
@@ -4195,37 +4580,6 @@ function ProfileButton({
 function followupCopy(prospect, task) {
   return task?.type === "send_twitter_followup" ? prospect.twitter_followup_message || prospect.followup_message || "" : prospect.followup_message || "";
 }
-function pendingTodoAgeMs(prospect, watchTask) {
-  if (prospect.pending_checked_at) return dateAgeMs(prospect.pending_checked_at);
-  if (watchTask?.created_at) return dateAgeMs(watchTask.created_at);
-  if (prospect.connection_sent_date && prospect.connection_sent_date < todayIsoClient()) return 4 * 60 * 60 * 1e3;
-  if (prospect.connection_sent_date) return 0;
-  return null;
-}
-function dateAgeMs(value) {
-  if (!value) return null;
-  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
-  const timestamp = Date.parse(normalized);
-  if (Number.isNaN(timestamp)) return null;
-  return Date.now() - timestamp;
-}
-function formatRelativeAge(value) {
-  const ageMs = dateAgeMs(value);
-  if (ageMs === null) return value;
-  const minutes = Math.max(0, Math.round(ageMs / 6e4));
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-function todayIsoClient() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Paris",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(/* @__PURE__ */ new Date());
-}
 function ProspectsTable({
   prospects
 }) {
@@ -4403,7 +4757,7 @@ function FunnelPanel({
 }) {
   const [window2, setWindow] = useState("7d");
   const funnel = window2 === "7d" ? funnel7d : funnel30d;
-  const steps = [["Added", funnel.prospectsAdded], ["First touch", funnel.firstTouchesSent], ["Accepted", funnel.linkedinAccepted], ["Report sent", funnel.reportsSent], ["Replied", funnel.repliesReceived], ["Active conversation", funnel.activeConversations]];
+  const steps = [["Added", funnel.prospectsAdded], ["First touch", funnel.firstTouchesSent], ["Accepted", funnel.linkedinAccepted], ["Report sent", funnel.reportsSent], ["Replied", funnel.prospectsReplied], ["Active conversation", funnel.activeConversations]];
   const max = Math.max(1, ...steps.map(([, value]) => value));
   return /* @__PURE__ */ jsxs("div", {
     className: "space-y-4",
@@ -4453,7 +4807,7 @@ function ChannelPerformanceTable({
         }), /* @__PURE__ */ jsx(TableHead, {
           children: "First touches"
         }), /* @__PURE__ */ jsx(TableHead, {
-          children: "Replies"
+          children: "Replied prospects"
         }), /* @__PURE__ */ jsx(TableHead, {
           children: "Conversations"
         }), /* @__PURE__ */ jsx(TableHead, {
@@ -4470,7 +4824,7 @@ function ChannelPerformanceTable({
         }), /* @__PURE__ */ jsx(TableCell, {
           children: row.firstTouches
         }), /* @__PURE__ */ jsx(TableCell, {
-          children: row.replies
+          children: row.prospectsReplied
         }), /* @__PURE__ */ jsx(TableCell, {
           children: row.activeConversations
         }), /* @__PURE__ */ jsx(TableCell, {
@@ -4539,7 +4893,7 @@ function TopicPerformanceTable({
             }), /* @__PURE__ */ jsx(TableHead, {
               children: "First touches"
             }), /* @__PURE__ */ jsx(TableHead, {
-              children: "Replies"
+              children: "Replied prospects"
             }), /* @__PURE__ */ jsx(TableHead, {
               children: "Conversations"
             }), /* @__PURE__ */ jsx(TableHead, {
@@ -4556,7 +4910,7 @@ function TopicPerformanceTable({
             }), /* @__PURE__ */ jsx(TableCell, {
               children: row.firstTouches
             }), /* @__PURE__ */ jsx(TableCell, {
-              children: row.replies
+              children: row.prospectsReplied
             }), /* @__PURE__ */ jsx(TableCell, {
               children: row.activeConversations
             }), /* @__PURE__ */ jsx(TableCell, {
@@ -5123,6 +5477,9 @@ function Textarea({ className, ...props }) {
     }
   );
 }
+function isSuggestionResult(result) {
+  return result.ok && result.intent === "suggestBriefTopics";
+}
 const meta$3 = ({
   data: data2
 }) => {
@@ -5152,11 +5509,35 @@ async function action$5({
 }) {
   const workspace = await requireWorkspace(params.workspaceSlug);
   const formData = await request.formData();
-  await runProspectAction(formData, workspace.id);
-  if (String(formData.get("intent") || "") === "deleteProspect") {
-    return redirect(`/${workspace.slug}`);
+  const intent = String(formData.get("intent") || "");
+  try {
+    if (intent === "suggestBriefTopics") {
+      const prospectId = Number(formData.get("prospectId"));
+      const direction = String(formData.get("direction") || "").trim();
+      const suggestions = await generateBriefTopicSuggestions(prospectId, direction);
+      return data({
+        ok: true,
+        intent,
+        suggestions
+      });
+    }
+    await runProspectAction(formData, workspace.id);
+    if (intent === "deleteProspect") {
+      return redirect(`/${workspace.slug}`);
+    }
+    return data({
+      ok: true,
+      intent
+    });
+  } catch (error) {
+    return data({
+      ok: false,
+      intent,
+      error: error instanceof Error ? error.message : "Unexpected error"
+    }, {
+      status: 400
+    });
   }
-  return redirect(`/${workspace.slug}/prospects/${params.id}`);
 }
 const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
   const {
@@ -5302,87 +5683,30 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
               title: "Brief",
               detail: "Topic, preparation notes and shared URL.",
               children: /* @__PURE__ */ jsxs("div", {
-                className: "grid gap-4 md:grid-cols-2",
-                children: [/* @__PURE__ */ jsxs(Form, {
-                  method: "post",
-                  className: "space-y-3",
-                  children: [/* @__PURE__ */ jsx("input", {
-                    type: "hidden",
-                    name: "intent",
-                    value: "updateBriefStrategy"
-                  }), /* @__PURE__ */ jsx("input", {
-                    type: "hidden",
-                    name: "prospectId",
-                    value: prospect.id
-                  }), /* @__PURE__ */ jsxs("div", {
-                    className: "space-y-2",
-                    children: [/* @__PURE__ */ jsx(Label, {
-                      htmlFor: "briefTopic",
-                      children: "Topic"
-                    }), /* @__PURE__ */ jsx(Input, {
-                      id: "briefTopic",
-                      name: "briefTopic",
-                      defaultValue: prospect.brief_topic || "",
-                      required: true,
-                      maxLength: 80,
-                      placeholder: "Narrative risk"
-                    })]
-                  }), /* @__PURE__ */ jsxs("div", {
-                    className: "space-y-2",
-                    children: [/* @__PURE__ */ jsx(Label, {
-                      htmlFor: "briefPreparation",
-                      children: "Preparation notes"
-                    }), /* @__PURE__ */ jsx(Textarea, {
-                      id: "briefPreparation",
-                      name: "briefPreparation",
-                      defaultValue: prospect.preparation_notes || "",
-                      rows: 4,
-                      placeholder: "Why this subject fits the profile, source signal, angle to prepare..."
-                    })]
-                  }), /* @__PURE__ */ jsxs(Button, {
-                    type: "submit",
-                    variant: "outline",
-                    size: "sm",
-                    children: [/* @__PURE__ */ jsx(Save, {
-                      className: "size-4"
-                    }), "Save brief theme"]
-                  })]
+                className: "grid gap-4",
+                children: [/* @__PURE__ */ jsx("div", {
+                  className: "flex justify-end",
+                  children: /* @__PURE__ */ jsx(BriefTopicSuggestionSheet, {
+                    prospect
+                  })
                 }), /* @__PURE__ */ jsxs("div", {
-                  className: "space-y-2",
-                  children: [/* @__PURE__ */ jsx(Label, {
-                    children: "Shared URL"
-                  }), prospect.shared_url ? /* @__PURE__ */ jsxs("a", {
-                    className: "inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline",
-                    href: prospect.shared_url,
-                    target: "_blank",
-                    rel: "noreferrer",
-                    children: [prospect.shared_url, /* @__PURE__ */ jsx(ExternalLink, {
-                      className: "size-3.5"
-                    })]
-                  }) : /* @__PURE__ */ jsxs(Form, {
-                    method: "post",
-                    className: "flex gap-2",
-                    children: [/* @__PURE__ */ jsx("input", {
-                      type: "hidden",
-                      name: "intent",
-                      value: "addBriefUrl"
-                    }), /* @__PURE__ */ jsx("input", {
-                      type: "hidden",
-                      name: "prospectId",
-                      value: prospect.id
-                    }), /* @__PURE__ */ jsx(Input, {
-                      name: "sharedUrl",
-                      type: "url",
-                      required: true,
-                      placeholder: "https://tempolis.com/share/...",
-                      className: "flex-1"
-                    }), /* @__PURE__ */ jsxs(Button, {
-                      type: "submit",
-                      variant: "outline",
-                      size: "sm",
-                      children: [/* @__PURE__ */ jsx(Link, {
-                        className: "size-4"
-                      }), "Add URL"]
+                  className: "grid gap-4 md:grid-cols-2",
+                  children: [/* @__PURE__ */ jsx(BriefStrategyForm, {
+                    prospect
+                  }), /* @__PURE__ */ jsxs("div", {
+                    className: "space-y-2",
+                    children: [/* @__PURE__ */ jsx(Label, {
+                      children: "Shared URL"
+                    }), prospect.shared_url ? /* @__PURE__ */ jsxs("a", {
+                      className: "inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline",
+                      href: prospect.shared_url,
+                      target: "_blank",
+                      rel: "noreferrer",
+                      children: [prospect.shared_url, /* @__PURE__ */ jsx(ExternalLink, {
+                        className: "size-3.5"
+                      })]
+                    }) : /* @__PURE__ */ jsx(BriefUrlInlineForm, {
+                      prospectId: prospect.id
                     })]
                   })]
                 })]
@@ -5391,25 +5715,15 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
               value: "messages",
               title: "Messages",
               detail: prospect.source_channel === "twitter" ? "Copy exact Twitter/X copy." : "Copy exact LinkedIn copy.",
-              children: [/* @__PURE__ */ jsxs("div", {
-                className: "mb-4 flex flex-wrap gap-2 rounded-lg border bg-muted/30 p-3",
-                children: [/* @__PURE__ */ jsx(ActionButton, {
-                  intent: "regenerateFromLatestCapture",
-                  prospectId: prospect.id,
-                  label: latestEvidence ? "Regenerate from latest capture" : "Regenerate from current context",
-                  icon: /* @__PURE__ */ jsx(RefreshCw, {
-                    size: 16
-                  }),
-                  variant: "outline"
-                }), prospect.source_channel === "linkedin" ? /* @__PURE__ */ jsx(ActionButton, {
-                  intent: "regenerateSaferCopy",
-                  prospectId: prospect.id,
-                  label: "No-note rewrite",
-                  icon: /* @__PURE__ */ jsx(RefreshCw, {
-                    size: 16
-                  }),
-                  variant: "outline"
-                }) : null]
+              children: [/* @__PURE__ */ jsx("div", {
+                className: "mb-4 flex justify-end",
+                children: /* @__PURE__ */ jsx(PrimaryMessageRegenerationSheet, {
+                  prospect,
+                  showConnectionNote,
+                  connectionLocked,
+                  reportLocked,
+                  latestEvidence: Boolean(latestEvidence)
+                })
               }), prospect.source_channel === "twitter" ? /* @__PURE__ */ jsxs("div", {
                 className: "grid gap-3",
                 children: [/* @__PURE__ */ jsx(MessageEditor, {
@@ -5502,43 +5816,8 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
               value: "notes",
               title: "Internal note",
               detail: "Small private CRM note.",
-              children: /* @__PURE__ */ jsxs(Form, {
-                method: "post",
-                className: "space-y-3",
-                children: [/* @__PURE__ */ jsx("input", {
-                  type: "hidden",
-                  name: "intent",
-                  value: "updateProspectNotes"
-                }), /* @__PURE__ */ jsx("input", {
-                  type: "hidden",
-                  name: "prospectId",
-                  value: prospect.id
-                }), prospect.notes ? /* @__PURE__ */ jsx("div", {
-                  className: "rounded-md border bg-muted/30 p-3 text-sm",
-                  children: /* @__PURE__ */ jsx("p", {
-                    className: "whitespace-pre-wrap",
-                    children: prospect.notes
-                  })
-                }) : null, /* @__PURE__ */ jsxs("div", {
-                  className: "space-y-2",
-                  children: [/* @__PURE__ */ jsx(Label, {
-                    htmlFor: "notes",
-                    children: "Note"
-                  }), /* @__PURE__ */ jsx(Textarea, {
-                    id: "notes",
-                    name: "notes",
-                    defaultValue: prospect.notes || "",
-                    rows: 3,
-                    placeholder: "Tiny internal note, context, next angle..."
-                  })]
-                }), /* @__PURE__ */ jsxs(Button, {
-                  type: "submit",
-                  variant: "outline",
-                  size: "sm",
-                  children: [/* @__PURE__ */ jsx(Save, {
-                    className: "size-4"
-                  }), "Save note"]
-                })]
+              children: /* @__PURE__ */ jsx(ProspectNotesForm, {
+                prospect
               })
             })
           }), /* @__PURE__ */ jsxs(Card, {
@@ -5626,6 +5905,541 @@ function SectionAccordion({
     }), /* @__PURE__ */ jsx(AccordionContent, {
       className: "px-5 pb-5 pt-0",
       children
+    })]
+  });
+}
+function useFetcherToast(fetcher, options2) {
+  const lastDataRef = useRef(null);
+  const revalidator = useRevalidator();
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    if (lastDataRef.current === fetcher.data) return;
+    lastDataRef.current = fetcher.data;
+    if (!fetcher.data.ok) {
+      const message2 = typeof options2.error === "function" ? options2.error(fetcher.data) : options2.error;
+      toast.error(message2 || "Action failed", {
+        description: fetcher.data.error
+      });
+      return;
+    }
+    const message = typeof options2.success === "function" ? options2.success(fetcher.data) : options2.success;
+    if (message) toast.success(message);
+    if (options2.revalidate !== false) revalidator.revalidate();
+    options2.onSuccess?.(fetcher.data);
+  }, [fetcher.state, fetcher.data, options2, revalidator]);
+}
+function actionToastSuccess(intent, label) {
+  const messages = {
+    generateNoNoteMode: "No-note mode generated",
+    switchToWithNoteMode: "With-note mode enabled",
+    markTwitterDmSent: "Twitter/X DM marked as sent",
+    markTwitterFollowupSent: "Twitter/X follow-up marked as sent",
+    markAccepted: "Prospect marked as accepted",
+    archiveDeclined: "Prospect archived as declined",
+    markConnectionSentWithNote: "Connection marked as sent with note",
+    markConnectionSentWithoutNote: "Connection marked as sent without note",
+    markReportSent: "Report marked as sent",
+    markFollowupSent: "Follow-up marked as sent",
+    skip: "Prospect skipped",
+    saveForLater: "Prospect saved for later",
+    archiveProspect: "Prospect archived",
+    reopenConversation: "Conversation reopened",
+    markReplySent: "Response marked as sent"
+  };
+  return messages[intent] || `${label} done`;
+}
+function actionToastError(intent, label) {
+  const messages = {
+    generateNoNoteMode: "Could not generate no-note mode",
+    switchToWithNoteMode: "Could not switch to with-note mode",
+    markTwitterDmSent: "Could not mark the DM as sent",
+    markTwitterFollowupSent: "Could not mark the follow-up as sent",
+    markAccepted: "Could not mark the prospect as accepted",
+    archiveDeclined: "Could not archive the declined prospect",
+    markConnectionSentWithNote: "Could not mark the connection as sent",
+    markConnectionSentWithoutNote: "Could not mark the no-note connection as sent",
+    markReportSent: "Could not mark the report as sent",
+    markFollowupSent: "Could not mark the follow-up as sent",
+    skip: "Could not skip the prospect",
+    saveForLater: "Could not save the prospect for later",
+    archiveProspect: "Could not archive the prospect",
+    reopenConversation: "Could not reopen the conversation",
+    markReplySent: "Could not mark the response as sent"
+  };
+  return messages[intent] || `Could not ${label.toLowerCase()}`;
+}
+function BriefTopicSuggestionSheet({
+  prospect
+}) {
+  const [open, setOpen] = useState(false);
+  return /* @__PURE__ */ jsxs(Sheet, {
+    open,
+    onOpenChange: setOpen,
+    children: [/* @__PURE__ */ jsx(SheetTrigger, {
+      asChild: true,
+      children: /* @__PURE__ */ jsxs(Button, {
+        type: "button",
+        variant: "outline",
+        size: "sm",
+        children: [/* @__PURE__ */ jsx(RefreshCw, {
+          className: "size-4"
+        }), "Refine topic"]
+      })
+    }), /* @__PURE__ */ jsxs(SheetContent, {
+      side: "right",
+      className: "w-full sm:max-w-xl",
+      children: [/* @__PURE__ */ jsxs(SheetHeader, {
+        children: [/* @__PURE__ */ jsx(SheetTitle, {
+          children: "Refine brief topic"
+        }), /* @__PURE__ */ jsx(SheetDescription, {
+          children: "Ask for better brief angles from the latest captured data and your current brief."
+        })]
+      }), /* @__PURE__ */ jsx("div", {
+        className: "overflow-y-auto px-4 pb-4",
+        children: /* @__PURE__ */ jsx(BriefTopicSuggestionPanel, {
+          prospect,
+          onTopicApplied: () => setOpen(false)
+        })
+      })]
+    })]
+  });
+}
+function PrimaryMessageRegenerationSheet({
+  prospect,
+  showConnectionNote,
+  connectionLocked,
+  reportLocked,
+  latestEvidence
+}) {
+  const [open, setOpen] = useState(false);
+  return /* @__PURE__ */ jsxs(Sheet, {
+    open,
+    onOpenChange: setOpen,
+    children: [/* @__PURE__ */ jsx(SheetTrigger, {
+      asChild: true,
+      children: /* @__PURE__ */ jsxs(Button, {
+        type: "button",
+        variant: "outline",
+        size: "sm",
+        children: [/* @__PURE__ */ jsx(RefreshCw, {
+          className: "size-4"
+        }), "Regenerate"]
+      })
+    }), /* @__PURE__ */ jsxs(SheetContent, {
+      side: "right",
+      className: "w-full sm:max-w-xl",
+      children: [/* @__PURE__ */ jsxs(SheetHeader, {
+        children: [/* @__PURE__ */ jsx(SheetTitle, {
+          children: "Regenerate main message"
+        }), /* @__PURE__ */ jsx(SheetDescription, {
+          children: "Rewrite the main outreach message from scraped data, the current brief theme, and an optional hint."
+        })]
+      }), /* @__PURE__ */ jsx("div", {
+        className: "overflow-y-auto px-4 pb-4",
+        children: /* @__PURE__ */ jsx(PrimaryMessageRegenerationPanel, {
+          prospect,
+          showConnectionNote,
+          connectionLocked,
+          reportLocked,
+          latestEvidence
+        })
+      })]
+    })]
+  });
+}
+function BriefTopicSuggestionPanel({
+  prospect,
+  onTopicApplied
+}) {
+  const fetcher = useFetcher();
+  useFetcherToast(fetcher, {
+    success: (result) => isSuggestionResult(result) ? `${result.suggestions.length} brief topic suggestion${result.suggestions.length > 1 ? "s" : ""} ready` : null,
+    error: "Could not suggest brief topics"
+  });
+  const suggestions = fetcher.data && isSuggestionResult(fetcher.data) ? fetcher.data.suggestions : [];
+  const submittedDirection = String(fetcher.formData?.get("direction") || "").trim();
+  const isPending = fetcher.state !== "idle";
+  return /* @__PURE__ */ jsxs("div", {
+    className: "rounded-lg border bg-muted/30 p-4",
+    children: [/* @__PURE__ */ jsxs("div", {
+      className: "flex flex-col gap-1",
+      children: [/* @__PURE__ */ jsx("p", {
+        className: "text-sm font-semibold",
+        children: "Need a better brief angle?"
+      }), /* @__PURE__ */ jsx("p", {
+        className: "text-sm text-muted-foreground",
+        children: "Ask the app for 3 alternative topics from the latest captured evidence, with an optional direction like “broader”, “more circular economy”, or “better for first outreach”."
+      })]
+    }), /* @__PURE__ */ jsxs(fetcher.Form, {
+      method: "post",
+      className: "mt-4 grid gap-3",
+      children: [/* @__PURE__ */ jsx("input", {
+        type: "hidden",
+        name: "intent",
+        value: "suggestBriefTopics"
+      }), /* @__PURE__ */ jsx("input", {
+        type: "hidden",
+        name: "prospectId",
+        value: prospect.id
+      }), /* @__PURE__ */ jsxs("div", {
+        className: "space-y-2",
+        children: [/* @__PURE__ */ jsx(Label, {
+          htmlFor: "brief-direction",
+          children: "Angle or direction"
+        }), /* @__PURE__ */ jsx(Textarea, {
+          id: "brief-direction",
+          name: "direction",
+          rows: 2,
+          placeholder: "Find a broader topic, more focused on circular economy and better for first outreach.",
+          defaultValue: submittedDirection,
+          disabled: isPending
+        })]
+      }), /* @__PURE__ */ jsx("div", {
+        className: "flex flex-wrap gap-2",
+        children: /* @__PURE__ */ jsxs(Button, {
+          type: "submit",
+          variant: "outline",
+          size: "sm",
+          disabled: isPending,
+          children: [isPending ? /* @__PURE__ */ jsx(LoaderCircle, {
+            className: "size-4 animate-spin"
+          }) : /* @__PURE__ */ jsx(RefreshCw, {
+            className: "size-4"
+          }), isPending ? "Suggesting..." : "Suggest better brief topics"]
+        })
+      })]
+    }), suggestions.length ? /* @__PURE__ */ jsx("div", {
+      className: "mt-4 grid gap-3",
+      children: suggestions.map((suggestion, index) => /* @__PURE__ */ jsx("div", {
+        className: "rounded-lg border bg-background p-3",
+        children: /* @__PURE__ */ jsxs("div", {
+          className: "flex flex-col gap-3 md:flex-row md:items-start md:justify-between",
+          children: [/* @__PURE__ */ jsxs("div", {
+            className: "min-w-0 space-y-2",
+            children: [/* @__PURE__ */ jsxs("div", {
+              className: "flex flex-wrap items-center gap-2",
+              children: [/* @__PURE__ */ jsx(Badge, {
+                variant: "info",
+                children: suggestion.topic
+              }), prospect.brief_topic?.toLowerCase() === suggestion.topic.toLowerCase() ? /* @__PURE__ */ jsx(Badge, {
+                variant: "muted",
+                children: "current"
+              }) : null]
+            }), /* @__PURE__ */ jsx("p", {
+              className: "text-sm text-muted-foreground",
+              children: suggestion.rationale
+            }), suggestion.preparationNotes ? /* @__PURE__ */ jsxs("p", {
+              className: "text-sm text-muted-foreground",
+              children: ["Prep: ", suggestion.preparationNotes]
+            }) : null]
+          }), /* @__PURE__ */ jsx(ApplySuggestedTopicButton, {
+            prospectId: prospect.id,
+            topic: suggestion.topic,
+            preparationNotes: suggestion.preparationNotes,
+            onApplied: onTopicApplied
+          })]
+        })
+      }, `${suggestion.topic}-${index}`))
+    }) : null]
+  });
+}
+function PrimaryMessageRegenerationPanel({
+  prospect,
+  showConnectionNote,
+  connectionLocked,
+  reportLocked,
+  latestEvidence
+}) {
+  const fetcher = useFetcher();
+  useFetcherToast(fetcher, {
+    success: "Main message regenerated",
+    error: "Could not regenerate the main message"
+  });
+  const isPending = fetcher.state !== "idle";
+  const primary = getPrimaryMessageConfig(prospect, {
+    showConnectionNote,
+    connectionLocked,
+    reportLocked
+  });
+  return /* @__PURE__ */ jsxs(fetcher.Form, {
+    method: "post",
+    className: "mb-4 rounded-lg border bg-muted/30 p-4",
+    children: [/* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "intent",
+      value: "regenerateMessageWithHint"
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "prospectId",
+      value: prospect.id
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "messageType",
+      value: primary.type
+    }), /* @__PURE__ */ jsxs("div", {
+      className: "space-y-1",
+      children: [/* @__PURE__ */ jsx("p", {
+        className: "text-sm font-semibold",
+        children: "Regenerate the main message"
+      }), /* @__PURE__ */ jsx("p", {
+        className: "text-sm text-muted-foreground",
+        children: latestEvidence ? `This rewrites ${primary.label.toLowerCase()} from the latest captured profile data, the current brief topic, and your optional hint.` : `This rewrites ${primary.label.toLowerCase()} from the current prospect context, the current brief topic, and your optional hint.`
+      })]
+    }), /* @__PURE__ */ jsxs("div", {
+      className: "space-y-2",
+      children: [/* @__PURE__ */ jsx(Label, {
+        htmlFor: "message-direction",
+        children: "Regenerate one message with a hint"
+      }), /* @__PURE__ */ jsx(Textarea, {
+        id: "message-direction",
+        name: "direction",
+        rows: 2,
+        placeholder: "Add that Tempolis is based on public messages. Keep it natural and not too salesy.",
+        disabled: isPending
+      })]
+    }), /* @__PURE__ */ jsxs("div", {
+      className: "mt-3 flex flex-wrap gap-2",
+      children: [/* @__PURE__ */ jsx(Badge, {
+        variant: "muted",
+        children: primary.label
+      }), /* @__PURE__ */ jsxs(Button, {
+        type: "submit",
+        variant: "outline",
+        size: "sm",
+        disabled: primary.disabled || isPending,
+        children: [isPending ? /* @__PURE__ */ jsx(LoaderCircle, {
+          className: "size-4 animate-spin"
+        }) : /* @__PURE__ */ jsx(RefreshCw, {
+          className: "size-4"
+        }), "Regenerate main message"]
+      })]
+    }), primary.disabled ? /* @__PURE__ */ jsx("p", {
+      className: "mt-2 text-xs text-muted-foreground",
+      children: "This message is already locked because it has been sent."
+    }) : null]
+  });
+}
+function getPrimaryMessageConfig(prospect, options2) {
+  if (prospect.source_channel === "twitter") {
+    return {
+      type: "twitter_dm",
+      label: "Twitter/X DM",
+      disabled: Boolean(prospect.twitter_contacted_date)
+    };
+  }
+  if (prospect.outreach_mode === "no_note") {
+    return {
+      type: "report_no_note",
+      label: "First message after acceptance",
+      disabled: options2.reportLocked
+    };
+  }
+  if (options2.showConnectionNote && !options2.connectionLocked) {
+    return {
+      type: "connection",
+      label: "Connection note",
+      disabled: false
+    };
+  }
+  return {
+    type: "report",
+    label: "After acceptance message",
+    disabled: options2.reportLocked
+  };
+}
+function BriefStrategyForm({
+  prospect
+}) {
+  const fetcher = useFetcher();
+  useFetcherToast(fetcher, {
+    success: "Brief updated",
+    error: "Could not save the brief"
+  });
+  const isPending = fetcher.state !== "idle";
+  return /* @__PURE__ */ jsxs(fetcher.Form, {
+    method: "post",
+    className: "space-y-3",
+    children: [/* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "intent",
+      value: "updateBriefStrategy"
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "prospectId",
+      value: prospect.id
+    }), /* @__PURE__ */ jsxs("div", {
+      className: "space-y-2",
+      children: [/* @__PURE__ */ jsx(Label, {
+        htmlFor: "briefTopic",
+        children: "Topic"
+      }), /* @__PURE__ */ jsx(Input, {
+        id: "briefTopic",
+        name: "briefTopic",
+        defaultValue: prospect.brief_topic || "",
+        required: true,
+        maxLength: 80,
+        placeholder: "Narrative risk",
+        disabled: isPending
+      })]
+    }), /* @__PURE__ */ jsxs("div", {
+      className: "space-y-2",
+      children: [/* @__PURE__ */ jsx(Label, {
+        htmlFor: "briefPreparation",
+        children: "Preparation notes"
+      }), /* @__PURE__ */ jsx(Textarea, {
+        id: "briefPreparation",
+        name: "briefPreparation",
+        defaultValue: prospect.preparation_notes || "",
+        rows: 4,
+        placeholder: "Why this subject fits the profile, source signal, angle to prepare...",
+        disabled: isPending
+      })]
+    }), /* @__PURE__ */ jsxs(Button, {
+      type: "submit",
+      variant: "outline",
+      size: "sm",
+      disabled: isPending,
+      children: [isPending ? /* @__PURE__ */ jsx(LoaderCircle, {
+        className: "size-4 animate-spin"
+      }) : /* @__PURE__ */ jsx(Save, {
+        className: "size-4"
+      }), "Save brief theme"]
+    })]
+  });
+}
+function ApplySuggestedTopicButton({
+  prospectId,
+  topic,
+  preparationNotes,
+  onApplied
+}) {
+  const fetcher = useFetcher();
+  useFetcherToast(fetcher, {
+    success: "Brief topic applied",
+    error: "Could not apply the suggested topic",
+    onSuccess: () => onApplied?.()
+  });
+  const isPending = fetcher.state !== "idle";
+  return /* @__PURE__ */ jsxs(fetcher.Form, {
+    method: "post",
+    className: "shrink-0",
+    children: [/* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "intent",
+      value: "updateBriefStrategy"
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "prospectId",
+      value: prospectId
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "briefTopic",
+      value: topic
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "briefPreparation",
+      value: preparationNotes
+    }), /* @__PURE__ */ jsxs(Button, {
+      type: "submit",
+      size: "sm",
+      disabled: isPending,
+      children: [isPending ? /* @__PURE__ */ jsx(LoaderCircle, {
+        className: "size-4 animate-spin"
+      }) : /* @__PURE__ */ jsx(Save, {
+        className: "size-4"
+      }), "Use topic"]
+    })]
+  });
+}
+function BriefUrlInlineForm({
+  prospectId
+}) {
+  const fetcher = useFetcher();
+  useFetcherToast(fetcher, {
+    success: "Brief URL saved",
+    error: "Could not save the brief URL"
+  });
+  const isPending = fetcher.state !== "idle";
+  return /* @__PURE__ */ jsxs(fetcher.Form, {
+    method: "post",
+    className: "flex gap-2",
+    children: [/* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "intent",
+      value: "addBriefUrl"
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "prospectId",
+      value: prospectId
+    }), /* @__PURE__ */ jsx(Input, {
+      name: "sharedUrl",
+      type: "url",
+      required: true,
+      placeholder: "https://tempolis.com/share/...",
+      className: "flex-1",
+      disabled: isPending
+    }), /* @__PURE__ */ jsxs(Button, {
+      type: "submit",
+      variant: "outline",
+      size: "sm",
+      disabled: isPending,
+      children: [isPending ? /* @__PURE__ */ jsx(LoaderCircle, {
+        className: "size-4 animate-spin"
+      }) : /* @__PURE__ */ jsx(Link, {
+        className: "size-4"
+      }), "Add URL"]
+    })]
+  });
+}
+function ProspectNotesForm({
+  prospect
+}) {
+  const fetcher = useFetcher();
+  useFetcherToast(fetcher, {
+    success: "Note saved",
+    error: "Could not save the note"
+  });
+  const isPending = fetcher.state !== "idle";
+  return /* @__PURE__ */ jsxs(fetcher.Form, {
+    method: "post",
+    className: "space-y-3",
+    children: [/* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "intent",
+      value: "updateProspectNotes"
+    }), /* @__PURE__ */ jsx("input", {
+      type: "hidden",
+      name: "prospectId",
+      value: prospect.id
+    }), prospect.notes ? /* @__PURE__ */ jsx("div", {
+      className: "rounded-md border bg-muted/30 p-3 text-sm",
+      children: /* @__PURE__ */ jsx("p", {
+        className: "whitespace-pre-wrap",
+        children: prospect.notes
+      })
+    }) : null, /* @__PURE__ */ jsxs("div", {
+      className: "space-y-2",
+      children: [/* @__PURE__ */ jsx(Label, {
+        htmlFor: "notes",
+        children: "Note"
+      }), /* @__PURE__ */ jsx(Textarea, {
+        id: "notes",
+        name: "notes",
+        defaultValue: prospect.notes || "",
+        rows: 3,
+        placeholder: "Tiny internal note, context, next angle...",
+        disabled: isPending
+      })]
+    }), /* @__PURE__ */ jsxs(Button, {
+      type: "submit",
+      variant: "outline",
+      size: "sm",
+      disabled: isPending,
+      children: [isPending ? /* @__PURE__ */ jsx(LoaderCircle, {
+        className: "size-4 animate-spin"
+      }) : /* @__PURE__ */ jsx(Save, {
+        className: "size-4"
+      }), "Save note"]
     })]
   });
 }
@@ -5849,7 +6663,13 @@ function MessageEditor({
     title,
     content
   });
-  return /* @__PURE__ */ jsxs(Form, {
+  const fetcher = useFetcher();
+  useFetcherToast(fetcher, {
+    success: `${title} saved`,
+    error: `Could not save ${title.toLowerCase()}`
+  });
+  const isPending = fetcher.state !== "idle";
+  return /* @__PURE__ */ jsxs(fetcher.Form, {
     method: "post",
     className: "rounded-lg border bg-muted/30 p-4",
     children: [/* @__PURE__ */ jsx("input", {
@@ -5880,7 +6700,10 @@ function MessageEditor({
           variant: "outline",
           size: "sm",
           className: "h-8",
-          children: [/* @__PURE__ */ jsx(Save, {
+          disabled: isPending,
+          children: [isPending ? /* @__PURE__ */ jsx(LoaderCircle, {
+            className: "size-3.5 animate-spin"
+          }) : /* @__PURE__ */ jsx(Save, {
             className: "size-3.5"
           }), "Save"]
         })]
@@ -5889,7 +6712,8 @@ function MessageEditor({
       name: "messageContent",
       defaultValue: content,
       rows: Math.max(3, Math.min(8, content.split("\n").length + 1)),
-      className: "mt-3"
+      className: "mt-3",
+      disabled: isPending
     })]
   });
 }
@@ -5925,12 +6749,18 @@ function ReplyPanel({
   replies
 }) {
   const latest = replies[0];
+  const fetcher = useFetcher();
+  useFetcherToast(fetcher, {
+    success: "Reply saved and draft generated",
+    error: "Could not save the reply"
+  });
+  const isPending = fetcher.state !== "idle";
   return /* @__PURE__ */ jsxs("div", {
     className: "grid gap-4",
     children: [latest ? /* @__PURE__ */ jsx(ReplyEditor, {
       prospect,
       reply: latest
-    }) : null, /* @__PURE__ */ jsxs(Form, {
+    }) : null, /* @__PURE__ */ jsxs(fetcher.Form, {
       method: "post",
       className: "rounded-lg border bg-muted/30 p-4",
       children: [/* @__PURE__ */ jsx("input", {
@@ -5951,7 +6781,8 @@ function ReplyPanel({
           name: "inboundContent",
           rows: 4,
           required: true,
-          placeholder: "Paste the LinkedIn reply here..."
+          placeholder: "Paste the LinkedIn reply here...",
+          disabled: isPending
         })]
       }), /* @__PURE__ */ jsxs("div", {
         className: "mt-3 space-y-2",
@@ -5962,7 +6793,8 @@ function ReplyPanel({
           id: "responseDirection",
           name: "responseDirection",
           rows: 3,
-          placeholder: "Optional. Example: thank them, clarify this is early, ask what signal would make it useful for their team..."
+          placeholder: "Optional. Example: thank them, clarify this is early, ask what signal would make it useful for their team...",
+          disabled: isPending
         })]
       }), /* @__PURE__ */ jsxs("div", {
         className: "mt-3 space-y-2",
@@ -5973,12 +6805,16 @@ function ReplyPanel({
           id: "suggestedResponse",
           name: "suggestedResponse",
           rows: 4,
-          placeholder: "Optional manual override. Leave empty and the app will generate a draft from the direction above."
+          placeholder: "Optional manual override. Leave empty and the app will generate a draft from the direction above.",
+          disabled: isPending
         })]
       }), /* @__PURE__ */ jsxs(Button, {
         type: "submit",
         className: "mt-3",
-        children: [/* @__PURE__ */ jsx(MessageSquareReply, {
+        disabled: isPending,
+        children: [isPending ? /* @__PURE__ */ jsx(LoaderCircle, {
+          className: "size-4 animate-spin"
+        }) : /* @__PURE__ */ jsx(MessageSquareReply, {
           className: "size-4"
         }), "Save and draft response"]
       })]
@@ -5989,6 +6825,18 @@ function ReplyEditor({
   prospect,
   reply
 }) {
+  const regenerateFetcher = useFetcher();
+  const updateFetcher = useFetcher();
+  useFetcherToast(regenerateFetcher, {
+    success: "Reply draft regenerated",
+    error: "Could not regenerate the reply draft"
+  });
+  useFetcherToast(updateFetcher, {
+    success: "Reply draft saved",
+    error: "Could not save the reply draft"
+  });
+  const isRegenerating = regenerateFetcher.state !== "idle";
+  const isSaving = updateFetcher.state !== "idle";
   return /* @__PURE__ */ jsxs("div", {
     className: "rounded-lg border bg-muted/30 p-4",
     children: [/* @__PURE__ */ jsxs("div", {
@@ -6011,7 +6859,7 @@ function ReplyEditor({
     }), /* @__PURE__ */ jsx("p", {
       className: "mt-3 whitespace-pre-wrap rounded-md border bg-background p-3 text-sm",
       children: reply.inbound_content
-    }), !reply.sent_at ? /* @__PURE__ */ jsxs(Form, {
+    }), !reply.sent_at ? /* @__PURE__ */ jsxs(regenerateFetcher.Form, {
       method: "post",
       className: "mt-3 rounded-md border bg-background p-3",
       children: [/* @__PURE__ */ jsx("input", {
@@ -6035,18 +6883,22 @@ function ReplyEditor({
           id: `responseDirection-${reply.id}`,
           name: "responseDirection",
           rows: 3,
-          placeholder: "Example: answer warmly, say the brief is a prototype, ask if a competitor comparison would be more useful..."
+          placeholder: "Example: answer warmly, say the brief is a prototype, ask if a competitor comparison would be more useful...",
+          disabled: isRegenerating
         })]
       }), /* @__PURE__ */ jsxs(Button, {
         type: "submit",
         variant: "outline",
         size: "sm",
         className: "mt-3",
-        children: [/* @__PURE__ */ jsx(RefreshCw, {
+        disabled: isRegenerating,
+        children: [isRegenerating ? /* @__PURE__ */ jsx(LoaderCircle, {
+          className: "size-3.5 animate-spin"
+        }) : /* @__PURE__ */ jsx(RefreshCw, {
           className: "size-3.5"
         }), "Regenerate draft"]
       })]
-    }) : null, /* @__PURE__ */ jsxs(Form, {
+    }) : null, /* @__PURE__ */ jsxs(updateFetcher.Form, {
       method: "post",
       className: "mt-3",
       children: [/* @__PURE__ */ jsx("input", {
@@ -6077,7 +6929,10 @@ function ReplyEditor({
             variant: "outline",
             size: "sm",
             className: "h-8",
-            children: [/* @__PURE__ */ jsx(Save, {
+            disabled: isSaving || Boolean(reply.sent_at),
+            children: [isSaving ? /* @__PURE__ */ jsx(LoaderCircle, {
+              className: "size-3.5 animate-spin"
+            }) : /* @__PURE__ */ jsx(Save, {
               className: "size-3.5"
             }), "Save"]
           })]
@@ -6087,7 +6942,7 @@ function ReplyEditor({
         defaultValue: reply.suggested_response || "",
         rows: 5,
         required: true,
-        disabled: Boolean(reply.sent_at),
+        disabled: Boolean(reply.sent_at) || isSaving,
         className: "mt-2"
       })]
     }), !reply.sent_at ? /* @__PURE__ */ jsx("div", {
@@ -6132,7 +6987,13 @@ function ActionButton({
   variant = "outline",
   extra
 }) {
-  return /* @__PURE__ */ jsxs(Form, {
+  const fetcher = useFetcher();
+  useFetcherToast(fetcher, {
+    success: () => actionToastSuccess(intent, label),
+    error: () => actionToastError(intent, label)
+  });
+  const isPending = fetcher.state !== "idle";
+  return /* @__PURE__ */ jsxs(fetcher.Form, {
     method: "post",
     children: [/* @__PURE__ */ jsx("input", {
       type: "hidden",
@@ -6150,7 +7011,10 @@ function ActionButton({
       type: "submit",
       variant,
       size: "sm",
-      children: [icon, label]
+      disabled: isPending,
+      children: [isPending ? /* @__PURE__ */ jsx(LoaderCircle, {
+        className: "size-4 animate-spin"
+      }) : icon, label]
     })]
   });
 }
@@ -8553,7 +9417,7 @@ const route20 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.definePrope
   default: search,
   loader
 }, Symbol.toStringTag, { value: "Module" }));
-const serverManifest = { "entry": { "module": "/assets/entry.client-2wUhN229.js", "imports": ["/assets/jsx-runtime-u17CrQMm.js", "/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/index-DZ8tZCut.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-BPpYcmuQ.js", "imports": ["/assets/jsx-runtime-u17CrQMm.js", "/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/index-DZ8tZCut.js", "/assets/card-Cr8GqWWr.js", "/assets/utils-BQHNewu7.js"], "css": ["/assets/root-BLDTXd7B.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/root": { "id": "routes/_redirects/root", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/root-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_app": { "id": "routes/_app", "parentId": "root", "path": ":workspaceSlug", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/_app-CUii-ugp.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/input-Dw36QX36.js", "/assets/button-DMbSIcQc.js", "/assets/index-Dced6aQt.js", "/assets/index-B2G4rFHg.js", "/assets/Combination-BoIzLXU0.js", "/assets/index-1Fqlo6p7.js", "/assets/utils-BQHNewu7.js", "/assets/index-DprgC5mT.js", "/assets/index-BebK7jfc.js", "/assets/search-DJhQTecO.js", "/assets/index-DASZgCjN.js", "/assets/index-DZ8tZCut.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "routes/_app", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-C39yIvUv.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-DASZgCjN.js", "/assets/input-Dw36QX36.js", "/assets/button-DMbSIcQc.js", "/assets/card-Cr8GqWWr.js", "/assets/accordion-D19wtHLW.js", "/assets/table-CLJka6TE.js", "/assets/status-badge-Dx0ymv7e.js", "/assets/utils-BQHNewu7.js", "/assets/send-BsrlMpbN.js", "/assets/index-B2G4rFHg.js", "/assets/external-link-CcltDUN6.js", "/assets/index-DZ8tZCut.js", "/assets/index-Dced6aQt.js", "/assets/index-1Fqlo6p7.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospects._index": { "id": "routes/prospects._index", "parentId": "routes/_app", "path": "prospects", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospects._index-BP9-Al-A.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/input-Dw36QX36.js", "/assets/card-Cr8GqWWr.js", "/assets/label-DE_wSpt2.js", "/assets/index-DZ8tZCut.js", "/assets/index-Dced6aQt.js", "/assets/index-B2G4rFHg.js", "/assets/Combination-BoIzLXU0.js", "/assets/index-BebK7jfc.js", "/assets/utils-BQHNewu7.js", "/assets/status-badge-Dx0ymv7e.js", "/assets/table-CLJka6TE.js", "/assets/search-DJhQTecO.js", "/assets/external-link-CcltDUN6.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "routes/_app", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-CSLe-yUk.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-DASZgCjN.js", "/assets/accordion-D19wtHLW.js", "/assets/input-Dw36QX36.js", "/assets/button-DMbSIcQc.js", "/assets/card-Cr8GqWWr.js", "/assets/label-DE_wSpt2.js", "/assets/textarea-CZJ0QrxL.js", "/assets/status-badge-Dx0ymv7e.js", "/assets/utils-BQHNewu7.js", "/assets/index-B2G4rFHg.js", "/assets/external-link-CcltDUN6.js", "/assets/send-BsrlMpbN.js", "/assets/save-CfSTMNRR.js", "/assets/index-DZ8tZCut.js", "/assets/index-Dced6aQt.js", "/assets/index-1Fqlo6p7.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/import": { "id": "routes/import", "parentId": "routes/_app", "path": "import", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/import-CXyoOxMV.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-DASZgCjN.js", "/assets/input-Dw36QX36.js", "/assets/button-DMbSIcQc.js", "/assets/card-Cr8GqWWr.js", "/assets/textarea-CZJ0QrxL.js", "/assets/index-Dced6aQt.js", "/assets/index-DprgC5mT.js", "/assets/index-1Fqlo6p7.js", "/assets/utils-BQHNewu7.js", "/assets/send-BsrlMpbN.js", "/assets/index-B2G4rFHg.js", "/assets/index-DZ8tZCut.js", "/assets/index-BebK7jfc.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "routes/_app", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-yK6KgCQc.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-DASZgCjN.js", "/assets/button-DMbSIcQc.js", "/assets/card-Cr8GqWWr.js", "/assets/index-B2G4rFHg.js", "/assets/search-DJhQTecO.js", "/assets/external-link-CcltDUN6.js", "/assets/index-DZ8tZCut.js", "/assets/utils-BQHNewu7.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/settings": { "id": "routes/settings", "parentId": "routes/_app", "path": "settings", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/settings-D0GDTyFG.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/input-Dw36QX36.js", "/assets/button-DMbSIcQc.js", "/assets/card-Cr8GqWWr.js", "/assets/label-DE_wSpt2.js", "/assets/textarea-CZJ0QrxL.js", "/assets/save-CfSTMNRR.js", "/assets/index-B2G4rFHg.js", "/assets/utils-BQHNewu7.js", "/assets/index-DZ8tZCut.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.dashboard": { "id": "routes/api.extension.dashboard", "parentId": "root", "path": "api/extension/dashboard", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.dashboard-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.connection-status": { "id": "routes/api.extension.connection-status", "parentId": "root", "path": "api/extension/connection-status", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.connection-status-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.prospect": { "id": "routes/api.extension.prospect", "parentId": "root", "path": "api/extension/prospect", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.prospect-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.prospect-search": { "id": "routes/api.prospect-search", "parentId": "root", "path": "api/prospect-search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.prospect-search-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/workspace": { "id": "routes/_redirects/workspace", "parentId": "root", "path": "workspace", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/workspace-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/prospects": { "id": "routes/_redirects/prospects", "parentId": "root", "path": "prospects", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/prospects-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/import": { "id": "routes/_redirects/import", "parentId": "root", "path": "import", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/import-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/discover": { "id": "routes/_redirects/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/discover-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/settings": { "id": "routes/_redirects/settings", "parentId": "root", "path": "settings", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/settings-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/batch": { "id": "routes/_redirects/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-vz16SxeB.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/twitter": { "id": "routes/_redirects/twitter", "parentId": "root", "path": "twitter", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/twitter-D1s9nkQh.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/search": { "id": "routes/_redirects/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-VQZaUIvj.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-84aa2690.js", "version": "84aa2690", "sri": void 0 };
+const serverManifest = { "entry": { "module": "/assets/entry.client-D-Q9AvpG.js", "imports": ["/assets/jsx-runtime-u17CrQMm.js", "/assets/chunk-OE4NN4TA-BE67ciz1.js", "/assets/index-H_58NagW.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-BQSp-2i0.js", "imports": ["/assets/jsx-runtime-u17CrQMm.js", "/assets/chunk-OE4NN4TA-BE67ciz1.js", "/assets/index-H_58NagW.js", "/assets/card-DldxYmaQ.js", "/assets/utils-BQHNewu7.js"], "css": ["/assets/root-CIBSXWDQ.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/root": { "id": "routes/_redirects/root", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/root-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_app": { "id": "routes/_app", "parentId": "root", "path": ":workspaceSlug", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/_app-BLfjf0mO.js", "imports": ["/assets/chunk-OE4NN4TA-BE67ciz1.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/input-jehVTDLk.js", "/assets/button-DTgfpspo.js", "/assets/sheet-D3e70LqR.js", "/assets/utils-BQHNewu7.js", "/assets/index-DHdkENIi.js", "/assets/index-DommH1rA.js", "/assets/index-BeuHNjCA.js", "/assets/index-DnEkBJfW.js", "/assets/index-B8ncRS4s.js", "/assets/index-BT-5kcyf.js", "/assets/index-XQN3PQfv.js", "/assets/search-Dn-nATh8.js", "/assets/index-Cne6opKD.js", "/assets/index-H_58NagW.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "routes/_app", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-C4IYCOzG.js", "imports": ["/assets/chunk-OE4NN4TA-BE67ciz1.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-Cne6opKD.js", "/assets/input-jehVTDLk.js", "/assets/button-DTgfpspo.js", "/assets/card-DldxYmaQ.js", "/assets/accordion-DjXQlfP1.js", "/assets/table-BUgFQ8Lr.js", "/assets/status-badge-VXX7t2oc.js", "/assets/utils-BQHNewu7.js", "/assets/send-BA0m4d8N.js", "/assets/index-DommH1rA.js", "/assets/external-link-CIKayCf9.js", "/assets/index-H_58NagW.js", "/assets/index-DHdkENIi.js", "/assets/index-B8ncRS4s.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospects._index": { "id": "routes/prospects._index", "parentId": "routes/_app", "path": "prospects", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospects._index-BE376xTE.js", "imports": ["/assets/chunk-OE4NN4TA-BE67ciz1.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/input-jehVTDLk.js", "/assets/card-DldxYmaQ.js", "/assets/label-BfvwKb69.js", "/assets/index-H_58NagW.js", "/assets/index-DHdkENIi.js", "/assets/index-DommH1rA.js", "/assets/index-BeuHNjCA.js", "/assets/index-DnEkBJfW.js", "/assets/index-XQN3PQfv.js", "/assets/utils-BQHNewu7.js", "/assets/status-badge-VXX7t2oc.js", "/assets/table-BUgFQ8Lr.js", "/assets/search-Dn-nATh8.js", "/assets/external-link-CIKayCf9.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "routes/_app", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-ByHV3zL4.js", "imports": ["/assets/chunk-OE4NN4TA-BE67ciz1.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-Cne6opKD.js", "/assets/accordion-DjXQlfP1.js", "/assets/input-jehVTDLk.js", "/assets/button-DTgfpspo.js", "/assets/card-DldxYmaQ.js", "/assets/label-BfvwKb69.js", "/assets/sheet-D3e70LqR.js", "/assets/textarea-BcQ0e4Y7.js", "/assets/status-badge-VXX7t2oc.js", "/assets/utils-BQHNewu7.js", "/assets/index-DommH1rA.js", "/assets/external-link-CIKayCf9.js", "/assets/send-BA0m4d8N.js", "/assets/loader-circle-BBHFdkcF.js", "/assets/save-jIyo0Tas.js", "/assets/index-H_58NagW.js", "/assets/index-DHdkENIi.js", "/assets/index-B8ncRS4s.js", "/assets/index-BeuHNjCA.js", "/assets/index-XQN3PQfv.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/import": { "id": "routes/import", "parentId": "routes/_app", "path": "import", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/import-wnCAArjZ.js", "imports": ["/assets/chunk-OE4NN4TA-BE67ciz1.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-Cne6opKD.js", "/assets/input-jehVTDLk.js", "/assets/button-DTgfpspo.js", "/assets/card-DldxYmaQ.js", "/assets/textarea-BcQ0e4Y7.js", "/assets/index-DHdkENIi.js", "/assets/index-BT-5kcyf.js", "/assets/index-B8ncRS4s.js", "/assets/utils-BQHNewu7.js", "/assets/send-BA0m4d8N.js", "/assets/index-DommH1rA.js", "/assets/loader-circle-BBHFdkcF.js", "/assets/index-H_58NagW.js", "/assets/index-XQN3PQfv.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "routes/_app", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-CUPVgFaF.js", "imports": ["/assets/chunk-OE4NN4TA-BE67ciz1.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-Cne6opKD.js", "/assets/button-DTgfpspo.js", "/assets/card-DldxYmaQ.js", "/assets/index-DommH1rA.js", "/assets/search-Dn-nATh8.js", "/assets/external-link-CIKayCf9.js", "/assets/index-H_58NagW.js", "/assets/utils-BQHNewu7.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/settings": { "id": "routes/settings", "parentId": "routes/_app", "path": "settings", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/settings-BqN6Kia9.js", "imports": ["/assets/chunk-OE4NN4TA-BE67ciz1.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/input-jehVTDLk.js", "/assets/button-DTgfpspo.js", "/assets/card-DldxYmaQ.js", "/assets/label-BfvwKb69.js", "/assets/textarea-BcQ0e4Y7.js", "/assets/save-jIyo0Tas.js", "/assets/index-DommH1rA.js", "/assets/utils-BQHNewu7.js", "/assets/index-H_58NagW.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.dashboard": { "id": "routes/api.extension.dashboard", "parentId": "root", "path": "api/extension/dashboard", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.dashboard-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.connection-status": { "id": "routes/api.extension.connection-status", "parentId": "root", "path": "api/extension/connection-status", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.connection-status-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.prospect": { "id": "routes/api.extension.prospect", "parentId": "root", "path": "api/extension/prospect", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.prospect-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.prospect-search": { "id": "routes/api.prospect-search", "parentId": "root", "path": "api/prospect-search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.prospect-search-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/workspace": { "id": "routes/_redirects/workspace", "parentId": "root", "path": "workspace", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/workspace-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/prospects": { "id": "routes/_redirects/prospects", "parentId": "root", "path": "prospects", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/prospects-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/import": { "id": "routes/_redirects/import", "parentId": "root", "path": "import", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/import-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/discover": { "id": "routes/_redirects/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/discover-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/settings": { "id": "routes/_redirects/settings", "parentId": "root", "path": "settings", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/settings-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/batch": { "id": "routes/_redirects/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-BRcyf02e.js", "imports": ["/assets/chunk-OE4NN4TA-BE67ciz1.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/twitter": { "id": "routes/_redirects/twitter", "parentId": "root", "path": "twitter", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/twitter-DYiAMSYo.js", "imports": ["/assets/chunk-OE4NN4TA-BE67ciz1.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/search": { "id": "routes/_redirects/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-DwMbN_Zr.js", "imports": ["/assets/chunk-OE4NN4TA-BE67ciz1.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-e7785d77.js", "version": "e7785d77", "sri": void 0 };
 const assetsBuildDirectory = "build/client";
 const basename = "/";
 const future = { "unstable_optimizeDeps": false, "unstable_passThroughRequests": false, "unstable_subResourceIntegrity": false, "unstable_trailingSlashAwareDataRequests": false, "unstable_previewServerPrerendering": false, "v8_middleware": true, "v8_splitRouteModules": false, "v8_viteEnvironmentApi": false };

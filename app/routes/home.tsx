@@ -23,6 +23,7 @@ import {
   type DashboardFunnelStats,
   type DashboardRateStats,
   type DashboardStatsPoint,
+  type DashboardTodoItem,
   type DashboardTopicPerformance,
   type Prospect,
   type Task,
@@ -67,11 +68,11 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 export default function Home() {
   const data = useLoaderData<typeof loader>();
-  const activeProspects = data.prospects.filter(
+  const prospectsInProgress = data.prospects.filter(
     (prospect) =>
       !["saved_for_later", "skipped", "archived_declined", "archived"].includes(prospect.status),
   );
-  const todoItems = buildTodoItems(data);
+  const todoItems = data.todoItems as DashboardTodoItem[];
 
   useEffect(() => {
     if (window.location.hash !== "#todos") return;
@@ -103,11 +104,12 @@ export default function Home() {
             storageKey="pipeline-now"
             title="Pipeline now"
             detail="Current workload for this workspace."
-            count={data.prospects.length}
+            count={data.activeProspectCount}
           >
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <KpiCard label="Prospects" value={data.prospects.length} />
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <KpiCard label="Active prospects" value={data.activeProspectCount} />
               <KpiCard label="Pending connections" value={data.sections.pendingConnections.length} />
+              <KpiCard label="Pending on standby" value={data.sections.pendingConnectionsStandby.length} />
               <KpiCard label="Reports to send" value={data.sections.acceptedReport.length} />
               <KpiCard label="Active conversations" value={data.sections.conversationsActive.length} />
             </div>
@@ -142,7 +144,7 @@ export default function Home() {
               />
               <StatsChart
                 title="Prospect base"
-                detail="Total prospects in CRM over the last 7 days."
+                detail="Active prospect base over the last 7 days."
                 points={data.stats.prospects7d}
                 totalLabel="today"
               />
@@ -162,12 +164,12 @@ export default function Home() {
             storageKey="conversion-rates"
             title="Conversion rates"
             detail="7-day and 30-day conversion health."
-            count={data.stats.rates7d.repliesReceived}
+            count={data.stats.rates7d.prospectsReplied}
           >
             <div className="grid gap-3 md:grid-cols-3">
               <RateCard title="LinkedIn accept rate" rate7d={data.stats.rates7d.linkedinAcceptRate} rate30d={data.stats.rates30d.linkedinAcceptRate} denominator={`${data.stats.rates7d.linkedinConnectionsSent} sent 7d · ${data.stats.rates30d.linkedinConnectionsSent} sent 30d`} />
               <RateCard title="Reply rate" rate7d={data.stats.rates7d.replyRate} rate30d={data.stats.rates30d.replyRate} denominator={`${data.stats.rates7d.firstMessagesSent} first messages 7d · ${data.stats.rates30d.firstMessagesSent} first messages 30d`} />
-              <RateCard title="Active conversation rate" rate7d={data.stats.rates7d.activeConversationRate} rate30d={data.stats.rates30d.activeConversationRate} denominator={`${data.stats.rates7d.repliesReceived} replies 7d · ${data.stats.rates30d.repliesReceived} replies 30d`} />
+              <RateCard title="Active conversation rate" rate7d={data.stats.rates7d.activeConversationRate} rate30d={data.stats.rates30d.activeConversationRate} denominator={`${data.stats.rates7d.prospectsReplied} replied prospects 7d · ${data.stats.rates30d.prospectsReplied} replied prospects 30d`} />
             </div>
           </CollapsibleDashboardSection>
 
@@ -317,10 +319,22 @@ export default function Home() {
                     />
                   )}
                 </TodayPanel>
+                <TodayPanel
+                  storageKey="pending-standby"
+                  title="Pending on standby"
+                  items={data.sections.pendingConnectionsStandby}
+                >
+                  {(prospect) => (
+                    <DashboardTaskLink
+                      prospect={prospect}
+                      detail={`${outreachModeLabel(prospect)} · sent ${prospect.connection_sent_date || "today"} · long-tail review cadence`}
+                    />
+                  )}
+                </TodayPanel>
               </div>
             </section>
 
-            <ProspectsInProgressPanel prospects={activeProspects} />
+            <ProspectsInProgressPanel prospects={prospectsInProgress} />
           </div>
 
           <aside className="h-fit lg:sticky lg:top-6">
@@ -423,114 +437,7 @@ function DashboardTaskLink({ prospect, detail }: { prospect: Prospect; detail: s
 
 type DashboardData = Awaited<ReturnType<typeof getDashboard>>;
 
-type TodoItem = {
-  key: string;
-  priority: number;
-  title: string;
-  detail: string;
-  kind: "message" | "followup" | "connection" | "twitter" | "brief" | "pending";
-  prospect?: Prospect;
-  task?: Task;
-};
-
-function buildTodoItems(data: DashboardData): TodoItem[] {
-  const prospectsById = new Map(data.prospects.map((prospect) => [prospect.id, prospect]));
-  const watchAcceptanceTasksByProspectId = new Map(
-    data.tasks
-      .filter((task) => task.status === "open" && task.type === "watch_acceptance" && task.prospect_id)
-      .map((task) => [task.prospect_id, task]),
-  );
-  const todos: TodoItem[] = [];
-
-  for (const prospect of data.sections.acceptedReport) {
-    todos.push({
-      key: `accepted-report-${prospect.id}`,
-      priority: 10,
-      title: `Send first message to ${prospect.name}`,
-      detail: `${prospect.brief_topic || "No brief topic"} · connection accepted`,
-      kind: "message",
-      prospect,
-    });
-  }
-
-  for (const task of data.sections.followupsDue) {
-    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : undefined;
-    todos.push({
-      key: `followup-${task.id}`,
-      priority: task.due_date && task.due_date < data.today ? 20 : 25,
-      title: `Send follow-up to ${task.name || prospect?.name || "prospect"}`,
-      detail:
-        task.due_date && task.due_date < data.today
-          ? `Overdue since ${task.due_date}`
-          : `Due ${task.due_date || "today"}`,
-      kind: "followup",
-      prospect,
-      task,
-    });
-  }
-
-  for (const task of data.sections.toConnect) {
-    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : undefined;
-    if (!prospect) continue;
-    todos.push({
-      key: `connect-${task.id}`,
-      priority: 30,
-      title: `Send connection request to ${prospect.name}`,
-      detail: `${outreachModeLabel(prospect)} · ${prospect.brief_topic || "no brief topic"}`,
-      kind: "connection",
-      prospect,
-      task,
-    });
-  }
-
-  for (const task of data.sections.twitterToContact) {
-    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : undefined;
-    if (!prospect) continue;
-    todos.push({
-      key: `twitter-${task.id}`,
-      priority: 30,
-      title: `Send Twitter/X DM to ${prospect.name}`,
-      detail: `${prospect.brief_topic || "no brief topic"} · manual first touch`,
-      kind: "twitter",
-      prospect,
-      task,
-    });
-  }
-
-  for (const prospect of data.sections.missingBriefUrls.filter(
-    (item) => item.status !== "connection_sent",
-  )) {
-    todos.push({
-      key: `brief-url-${prospect.id}`,
-      priority: 40,
-      title: `Add brief URL for ${prospect.name}`,
-      detail: `Prepare ${prospect.brief_topic || "brief"} before first message`,
-      kind: "brief",
-      prospect,
-    });
-  }
-
-  for (const prospect of data.sections.pendingConnections) {
-    const watchTask = watchAcceptanceTasksByProspectId.get(prospect.id);
-    const pendingAge = pendingTodoAgeMs(prospect, watchTask);
-    if (pendingAge !== null && pendingAge < 4 * 60 * 60 * 1000) continue;
-
-    todos.push({
-      key: `pending-check-${prospect.id}`,
-      priority: prospect.pending_checked_at ? 60 : 50,
-      title: `Check pending connection for ${prospect.name}`,
-      detail: prospect.pending_checked_at
-        ? `Last checked ${formatRelativeAge(prospect.pending_checked_at)}`
-        : `Never checked · sent ${prospect.connection_sent_date || "unknown date"}`,
-      kind: "pending",
-      prospect,
-    });
-  }
-
-  return todos.sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
-}
-
-function TodoItemRow({ item }: { item: TodoItem }) {
+function TodoItemRow({ item }: { item: DashboardTodoItem }) {
   const icon =
     item.kind === "message" ? (
       <Send size={18} />
@@ -705,42 +612,6 @@ function followupCopy(prospect: Prospect, task?: Task) {
     : prospect.followup_message || "";
 }
 
-function pendingTodoAgeMs(prospect: Prospect, watchTask?: Task) {
-  if (prospect.pending_checked_at) return dateAgeMs(prospect.pending_checked_at);
-  if (watchTask?.created_at) return dateAgeMs(watchTask.created_at);
-  if (prospect.connection_sent_date && prospect.connection_sent_date < todayIsoClient())
-    return 4 * 60 * 60 * 1000;
-  if (prospect.connection_sent_date) return 0;
-  return null;
-}
-
-function dateAgeMs(value: string | null) {
-  if (!value) return null;
-  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
-  const timestamp = Date.parse(normalized);
-  if (Number.isNaN(timestamp)) return null;
-  return Date.now() - timestamp;
-}
-
-function formatRelativeAge(value: string) {
-  const ageMs = dateAgeMs(value);
-  if (ageMs === null) return value;
-  const minutes = Math.max(0, Math.round(ageMs / 60000));
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
-function todayIsoClient() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Paris",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-
 function ProspectsTable({ prospects }: { prospects: Prospect[] }) {
   return (
     <div className="overflow-x-auto">
@@ -911,7 +782,7 @@ function FunnelPanel({
     ["First touch", funnel.firstTouchesSent],
     ["Accepted", funnel.linkedinAccepted],
     ["Report sent", funnel.reportsSent],
-    ["Replied", funnel.repliesReceived],
+    ["Replied", funnel.prospectsReplied],
     ["Active conversation", funnel.activeConversations],
   ] as const;
   const max = Math.max(1, ...steps.map(([, value]) => value));
@@ -961,7 +832,7 @@ function ChannelPerformanceTable({ rows }: { rows: DashboardChannelBreakdown[] }
           <TableHead>Channel</TableHead>
           <TableHead>Prospects</TableHead>
           <TableHead>First touches</TableHead>
-          <TableHead>Replies</TableHead>
+          <TableHead>Replied prospects</TableHead>
           <TableHead>Conversations</TableHead>
           <TableHead>Reply rate</TableHead>
         </TableRow>
@@ -972,7 +843,7 @@ function ChannelPerformanceTable({ rows }: { rows: DashboardChannelBreakdown[] }
             <TableCell className="font-medium">{row.channel === "twitter" ? "Twitter/X" : "LinkedIn"}</TableCell>
             <TableCell>{row.prospects}</TableCell>
             <TableCell>{row.firstTouches}</TableCell>
-            <TableCell>{row.replies}</TableCell>
+            <TableCell>{row.prospectsReplied}</TableCell>
             <TableCell>{row.activeConversations}</TableCell>
             <TableCell>{formatRate(row.replyRate)}</TableCell>
           </TableRow>
@@ -1030,7 +901,7 @@ function TopicPerformanceTable({ rows }: { rows: DashboardTopicPerformance[] }) 
               <TableHead>Topic</TableHead>
               <TableHead>Prospects</TableHead>
               <TableHead>First touches</TableHead>
-              <TableHead>Replies</TableHead>
+              <TableHead>Replied prospects</TableHead>
               <TableHead>Conversations</TableHead>
               <TableHead>Reply rate</TableHead>
             </TableRow>
@@ -1041,7 +912,7 @@ function TopicPerformanceTable({ rows }: { rows: DashboardTopicPerformance[] }) 
                 <TableCell className="font-medium">{row.topic}</TableCell>
                 <TableCell>{row.prospects}</TableCell>
                 <TableCell>{row.firstTouches}</TableCell>
-                <TableCell>{row.replies}</TableCell>
+                <TableCell>{row.prospectsReplied}</TableCell>
                 <TableCell>{row.activeConversations}</TableCell>
                 <TableCell>{formatRate(row.replyRate)}</TableCell>
               </TableRow>

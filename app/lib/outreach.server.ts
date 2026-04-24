@@ -74,6 +74,35 @@ type ReplyDraft = {
   suggestedResponse: string;
 };
 
+export type BriefTopicSuggestion = {
+  topic: string;
+  rationale: string;
+  preparationNotes: string;
+};
+
+const INACTIVE_PROSPECT_STATUSES = ["saved_for_later", "skipped", "archived_declined", "archived"] as const;
+
+function activeProspectWhereSql(alias?: string) {
+  const prefix = alias ? `${alias}.` : "";
+  return `
+    ${prefix}status NOT IN (${INACTIVE_PROSPECT_STATUSES.map(() => "?").join(", ")})
+    AND NOT (${prefix}status = 'to_contact' AND COALESCE(${prefix}contact_now, 0) = 0)
+  `;
+}
+
+function activeProspectWhereArgs(): InValue[] {
+  return [...INACTIVE_PROSPECT_STATUSES];
+}
+
+function isActiveProspectForKpi(prospect: Pick<Prospect, "status" | "contact_now">) {
+  return (
+    !INACTIVE_PROSPECT_STATUSES.includes(
+      prospect.status as (typeof INACTIVE_PROSPECT_STATUSES)[number],
+    )
+    && !(prospect.status === "to_contact" && !prospect.contact_now)
+  );
+}
+
 export type AnalyzedProspect = {
   name: string;
   position: string;
@@ -154,7 +183,7 @@ export type DashboardFunnelStats = {
   firstTouchesSent: number;
   linkedinAccepted: number;
   reportsSent: number;
-  repliesReceived: number;
+  prospectsReplied: number;
   activeConversations: number;
 };
 
@@ -164,7 +193,7 @@ export type DashboardRateStats = {
   activeConversationRate: number | null;
   linkedinConnectionsSent: number;
   firstMessagesSent: number;
-  repliesReceived: number;
+  prospectsReplied: number;
 };
 
 export type DashboardProcessHealth = {
@@ -186,7 +215,7 @@ export type DashboardChannelBreakdown = {
   channel: "linkedin" | "twitter";
   prospects: number;
   firstTouches: number;
-  replies: number;
+  prospectsReplied: number;
   activeConversations: number;
   replyRate: number | null;
 };
@@ -195,9 +224,32 @@ export type DashboardTopicPerformance = {
   topic: string;
   prospects: number;
   firstTouches: number;
-  replies: number;
+  prospectsReplied: number;
   activeConversations: number;
   replyRate: number | null;
+};
+
+export type DashboardSections = {
+  toConnect: Task[];
+  twitterToContact: Task[];
+  acceptedReport: Prospect[];
+  missingBriefUrls: Prospect[];
+  followupsDue: Task[];
+  followupsScheduled: Task[];
+  conversationsActive: Prospect[];
+  pendingConnections: Prospect[];
+  pendingConnectionsStandby: Prospect[];
+  doneToday: Event[];
+};
+
+export type DashboardTodoItem = {
+  key: string;
+  priority: number;
+  title: string;
+  detail: string;
+  kind: "message" | "followup" | "connection" | "twitter" | "brief" | "pending";
+  prospect?: Prospect;
+  task?: Task;
 };
 
 export type Workspace = {
@@ -243,7 +295,7 @@ export type PromptTemplate = {
   id: number;
   workspace_id: number;
   channel: "linkedin" | "twitter";
-  purpose: "batch_analysis" | "no_note_rewrite" | "message_regeneration";
+  purpose: "batch_analysis" | "no_note_rewrite" | "message_regeneration" | "brief_topic_refinement";
   name: string;
   system_prompt: string;
   user_prompt: string;
@@ -264,6 +316,7 @@ export type ExtensionPendingConnection = {
   connection_sent_date: string | null;
   pending_checked_at: string | null;
   connection_last_state: string | null;
+  watch_created_at?: string | null;
 };
 
 export async function getWorkspaces() {
@@ -340,78 +393,57 @@ export async function searchProspectsGlobally(query: string, limit = 8) {
 
 export async function getWorkspaceTodoSummaries() {
   const today = todayIso();
-  const rows = await all<{
-    workspace_id: number;
-    workspace_slug: string;
-    workspace_name: string;
-    todo_count: number;
-    overdue_count: number;
-  }>(`
-    SELECT
-      w.id AS workspace_id,
-      w.slug AS workspace_slug,
-      w.name AS workspace_name,
-      (
-        SELECT COUNT(*)
+  const workspaces = await getWorkspaces();
+  const summaries = await Promise.all(workspaces.map(async (workspace) => {
+    const [prospectRows, tasks] = await Promise.all([
+      all<Prospect>(`
+        SELECT
+          p.*,
+          w.slug AS workspace_slug,
+          w.name AS workspace_name,
+          b.topic AS brief_topic,
+          b.preparation_notes,
+          b.shared_url,
+          cm.content AS connection_message,
+          rm.content AS report_message,
+          nrm.content AS no_note_report_message,
+          fm.content AS followup_message,
+          tdm.content AS twitter_dm_message,
+          tfm.content AS twitter_followup_message
         FROM prospects p
-        WHERE p.workspace_id = w.id
-          AND p.status = 'accepted'
-          AND p.report_sent_date IS NULL
-      ) + (
-        SELECT COUNT(*)
+        JOIN workspaces w ON w.id = p.workspace_id
+        LEFT JOIN briefs b ON b.prospect_id = p.id
+        LEFT JOIN messages cm ON cm.prospect_id = p.id AND cm.type = 'connection'
+        LEFT JOIN messages rm ON rm.prospect_id = p.id AND rm.type = 'report'
+        LEFT JOIN messages nrm ON nrm.prospect_id = p.id AND nrm.type = 'report_no_note'
+        LEFT JOIN messages fm ON fm.prospect_id = p.id AND fm.type = 'followup'
+        LEFT JOIN messages tdm ON tdm.prospect_id = p.id AND tdm.type = 'twitter_dm'
+        LEFT JOIN messages tfm ON tfm.prospect_id = p.id AND tfm.type = 'twitter_followup'
+        WHERE p.workspace_id = ?
+      `, [workspace.id]),
+      all<Task>(`
+        SELECT t.*, p.name, p.profile_url, p.source_channel, p.twitter_url
         FROM tasks t
-        JOIN prospects p ON p.id = t.prospect_id
-        WHERE p.workspace_id = w.id
+        LEFT JOIN prospects p ON p.id = t.prospect_id
+        WHERE p.workspace_id = ?
           AND t.status = 'open'
-          AND t.type IN ('send_followup', 'send_twitter_followup')
-          AND t.due_date IS NOT NULL
-          AND t.due_date <= ?
-      ) + (
-        SELECT COUNT(*)
-        FROM tasks t
-        JOIN prospects p ON p.id = t.prospect_id
-        WHERE p.workspace_id = w.id
-          AND t.status = 'open'
-          AND t.type IN ('send_connection', 'send_twitter_dm')
-      ) + (
-        SELECT COUNT(*)
-        FROM briefs b
-        JOIN prospects p ON p.id = b.prospect_id
-        WHERE p.workspace_id = w.id
-          AND p.status <> 'connection_sent'
-          AND p.status IN ('accepted')
-          AND b.topic IS NOT NULL
-          AND trim(b.topic) <> ''
-          AND (b.shared_url IS NULL OR trim(b.shared_url) = '')
-      ) + (
-        SELECT COUNT(*)
-        FROM prospects p
-        WHERE p.workspace_id = w.id
-          AND p.status = 'connection_sent'
-          AND (
-            p.pending_checked_at IS NULL
-            OR p.pending_checked_at <= datetime('now', '-4 hours')
-          )
-      ) AS todo_count,
-      (
-        SELECT COUNT(*)
-        FROM tasks t
-        JOIN prospects p ON p.id = t.prospect_id
-        WHERE p.workspace_id = w.id
-          AND t.status = 'open'
-          AND t.type IN ('send_followup', 'send_twitter_followup')
-          AND t.due_date IS NOT NULL
-          AND t.due_date < ?
-      ) AS overdue_count
-    FROM workspaces w
-    ORDER BY w.name
-  `, [today, today]);
+      `, [workspace.id]),
+    ]);
 
-  return rows.map((row) => ({
-    ...row,
-    todo_count: Number(row.todo_count || 0),
-    overdue_count: Number(row.overdue_count || 0),
-  })) satisfies WorkspaceTodoSummary[];
+    const prospects = prospectRows.map(withDerivedMessages);
+    const sections = buildDashboardSections(today, prospects, tasks, []);
+    const todoItems = buildDashboardTodoItems({ today, prospects, tasks, sections });
+
+    return {
+      workspace_id: workspace.id,
+      workspace_slug: workspace.slug,
+      workspace_name: workspace.name,
+      todo_count: todoItems.length,
+      overdue_count: todoItems.filter((item) => item.kind === "followup" && item.task?.due_date && item.task.due_date < today).length,
+    };
+  }));
+
+  return summaries satisfies WorkspaceTodoSummary[];
 }
 
 export async function getWorkspaceDocs(workspaceId: number) {
@@ -589,28 +621,47 @@ export async function setProspectOutreachPreference(id: number, mode: "with_note
 export async function getExtensionDashboard(workspaceId?: number) {
   const workspace = workspaceId ? await one<Workspace>("SELECT * FROM workspaces WHERE id = ?", [workspaceId]) : await getActiveWorkspace();
   if (!workspace) throw new Error("Workspace not found.");
-  const pendingCheckDelayHours = 4;
+  const today = todayIso();
   const pendingConnections = await all<ExtensionPendingConnection>(`
-    SELECT id, name, position, profile_url, outreach_mode, connection_sent_date, pending_checked_at, connection_last_state
+    SELECT
+      prospects.id,
+      prospects.name,
+      prospects.position,
+      prospects.profile_url,
+      prospects.outreach_mode,
+      prospects.connection_sent_date,
+      prospects.pending_checked_at,
+      prospects.connection_last_state,
+      wt.created_at AS watch_created_at
     FROM prospects
-    WHERE status = 'connection_sent'
-      AND workspace_id = ?
-      AND (
-        pending_checked_at IS NULL
-        OR pending_checked_at <= datetime('now', ?)
-      )
+    LEFT JOIN tasks wt ON wt.prospect_id = prospects.id AND wt.type = 'watch_acceptance' AND wt.status = 'open'
+    WHERE prospects.status = 'connection_sent'
+      AND prospects.workspace_id = ?
     ORDER BY
-      CASE WHEN pending_checked_at IS NULL THEN 0 ELSE 1 END,
-      pending_checked_at,
-      COALESCE(connection_sent_date, '9999-12-31'),
-      name
-  `, [workspace.id, `-${pendingCheckDelayHours} hours`]);
+      CASE WHEN prospects.pending_checked_at IS NULL THEN 0 ELSE 1 END,
+      prospects.pending_checked_at,
+      COALESCE(prospects.connection_sent_date, '9999-12-31'),
+      prospects.name
+  `, [workspace.id]);
+
+  const duePendingConnections = pendingConnections.filter((prospect) =>
+    isPendingCheckDue(prospect as Prospect, prospect.watch_created_at ? ({ created_at: prospect.watch_created_at } as Task) : undefined, today),
+  );
+  const standbyPendingConnections = pendingConnections.filter((prospect) =>
+    pendingReviewBucket(
+      prospect as Prospect,
+      prospect.watch_created_at ? ({ created_at: prospect.watch_created_at } as Task) : undefined,
+    ) === "standby",
+  );
 
   return {
-    today: todayIso(),
+    today,
     workspace,
-    pendingCheckDelayHours,
-    pendingConnections,
+    pendingCheckDelayHours: 4,
+    standbyReviewDelayHours: 72,
+    longTailAfterHours: 48,
+    pendingConnections: duePendingConnections,
+    standbyPendingConnections,
   };
 }
 
@@ -773,31 +824,27 @@ export async function getDashboard(workspaceInput?: number | Workspace) {
     getDashboardStats(today, workspace.id),
   ]);
   const prospects = prospectRows.map(withDerivedMessages);
+  const sections = buildDashboardSections(today, prospects, tasks, events);
+  const todoItems = buildDashboardTodoItems({ today, prospects, tasks, sections });
+  const activeProspectCount = prospects.filter(isActiveProspectForKpi).length;
+  const pendingChecksDue = todoItems.filter((item) => item.kind === "pending").length;
 
   return {
     today,
     workspace,
     prospects,
+    activeProspectCount,
     tasks,
     events,
-    stats,
-    sections: {
-      toConnect: tasks.filter((item) => item.status === "open" && item.type === "send_connection"),
-      twitterToContact: tasks.filter((item) => item.status === "open" && item.type === "send_twitter_dm"),
-      acceptedReport: prospects.filter((item) => item.status === "accepted" && !item.report_sent_date),
-      missingBriefUrls: prospects.filter(
-        (item) => ["connection_sent", "accepted"].includes(item.status) && Boolean(item.brief_topic) && !item.shared_url,
-      ),
-      followupsDue: tasks.filter(
-        (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date <= today,
-      ),
-      followupsScheduled: tasks.filter(
-        (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date > today,
-      ),
-      conversationsActive: prospects.filter((item) => item.status === "conversation_active"),
-      pendingConnections: prospects.filter((item) => item.status === "connection_sent"),
-      doneToday: events.filter((item) => String(item.happened_at).slice(0, 10) === today),
+    todoItems,
+    stats: {
+      ...stats,
+      processHealth: {
+        ...stats.processHealth,
+        pendingChecksDue,
+      },
     },
+    sections,
   };
 }
 
@@ -854,30 +901,34 @@ async function getDashboardStats(today: string, workspaceId: number) {
       SELECT COUNT(*) AS count
       FROM prospects
       WHERE workspace_id = ?
+        AND ${activeProspectWhereSql()}
         AND date(created_at) < ?
-    `, [workspaceId, firstDay7]),
+    `, [workspaceId, ...activeProspectWhereArgs(), firstDay7]),
     all<{ date: string; count: number }>(`
       SELECT date(created_at) AS date, COUNT(*) AS count
       FROM prospects
       WHERE workspace_id = ?
+        AND ${activeProspectWhereSql()}
         AND date(created_at) >= ?
         AND date(created_at) <= ?
       GROUP BY date(created_at)
-    `, [workspaceId, firstDay7, today]),
+    `, [workspaceId, ...activeProspectWhereArgs(), firstDay7, today]),
     one<{ count: number }>(`
       SELECT COUNT(*) AS count
       FROM prospects
       WHERE workspace_id = ?
+        AND ${activeProspectWhereSql()}
         AND date(created_at) < ?
-    `, [workspaceId, firstDay30]),
+    `, [workspaceId, ...activeProspectWhereArgs(), firstDay30]),
     all<{ date: string; count: number }>(`
       SELECT date(created_at) AS date, COUNT(*) AS count
       FROM prospects
       WHERE workspace_id = ?
+        AND ${activeProspectWhereSql()}
         AND date(created_at) >= ?
         AND date(created_at) <= ?
       GROUP BY date(created_at)
-    `, [workspaceId, firstDay30, today]),
+    `, [workspaceId, ...activeProspectWhereArgs(), firstDay30, today]),
     getFunnelStats(workspaceId, firstDay7, today),
     getFunnelStats(workspaceId, firstDay30, today),
     getRateStats(workspaceId, firstDay7, today),
@@ -933,8 +984,160 @@ async function getDashboardStats(today: string, workspaceId: number) {
   };
 }
 
+export function buildDashboardSections(today: string, prospects: Prospect[], tasks: Task[], events: Event[]): DashboardSections {
+  const watchAcceptanceTasksByProspectId = new Map(
+    tasks
+      .filter((task) => task.status === "open" && task.type === "watch_acceptance" && task.prospect_id)
+      .map((task) => [task.prospect_id, task]),
+  );
+  const pendingConnections = prospects.filter((item) => item.status === "connection_sent");
+
+  return {
+    toConnect: tasks.filter((item) => item.status === "open" && item.type === "send_connection"),
+    twitterToContact: tasks.filter((item) => item.status === "open" && item.type === "send_twitter_dm"),
+    acceptedReport: prospects.filter((item) => item.status === "accepted" && !item.report_sent_date),
+    missingBriefUrls: prospects.filter(
+      (item) => ["connection_sent", "accepted"].includes(item.status) && Boolean(item.brief_topic) && !item.shared_url,
+    ),
+    followupsDue: tasks.filter(
+      (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date <= today,
+    ),
+    followupsScheduled: tasks.filter(
+      (item) => item.status === "open" && ["send_followup", "send_twitter_followup"].includes(item.type) && item.due_date && item.due_date > today,
+    ),
+    conversationsActive: prospects.filter((item) => item.status === "conversation_active"),
+    pendingConnections: pendingConnections.filter(
+      (prospect) => pendingReviewBucket(prospect, watchAcceptanceTasksByProspectId.get(prospect.id)) === "active",
+    ),
+    pendingConnectionsStandby: pendingConnections.filter(
+      (prospect) => pendingReviewBucket(prospect, watchAcceptanceTasksByProspectId.get(prospect.id)) === "standby",
+    ),
+    doneToday: events.filter((item) => String(item.happened_at).slice(0, 10) === today),
+  };
+}
+
+export function buildDashboardTodoItems({
+  today,
+  prospects,
+  tasks,
+  sections,
+}: {
+  today: string;
+  prospects: Prospect[];
+  tasks: Task[];
+  sections: DashboardSections;
+}): DashboardTodoItem[] {
+  const prospectsById = new Map(prospects.map((prospect) => [prospect.id, prospect]));
+  const watchAcceptanceTasksByProspectId = new Map(
+    tasks
+      .filter((task) => task.status === "open" && task.type === "watch_acceptance" && task.prospect_id)
+      .map((task) => [task.prospect_id, task]),
+  );
+  const todos: DashboardTodoItem[] = [];
+
+  for (const prospect of sections.acceptedReport) {
+    todos.push({
+      key: `accepted-report-${prospect.id}`,
+      priority: 10,
+      title: `Send first message to ${prospect.name}`,
+      detail: `${prospect.brief_topic || "No brief topic"} · connection accepted`,
+      kind: "message",
+      prospect,
+    });
+  }
+
+  for (const task of sections.followupsDue) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : undefined;
+    todos.push({
+      key: `followup-${task.id}`,
+      priority: task.due_date && task.due_date < today ? 20 : 25,
+      title: `Send follow-up to ${task.name || prospect?.name || "prospect"}`,
+      detail:
+        task.due_date && task.due_date < today
+          ? `Overdue since ${task.due_date}`
+          : `Due ${task.due_date || "today"}`,
+      kind: "followup",
+      prospect,
+      task,
+    });
+  }
+
+  for (const task of sections.toConnect) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : undefined;
+    if (!prospect) continue;
+    todos.push({
+      key: `connect-${task.id}`,
+      priority: 30,
+      title: `Send connection request to ${prospect.name}`,
+      detail: `${serverOutreachModeLabel(prospect)} · ${prospect.brief_topic || "no brief topic"}`,
+      kind: "connection",
+      prospect,
+      task,
+    });
+  }
+
+  for (const task of sections.twitterToContact) {
+    const prospect = task.prospect_id ? prospectsById.get(task.prospect_id) : undefined;
+    if (!prospect) continue;
+    todos.push({
+      key: `twitter-${task.id}`,
+      priority: 30,
+      title: `Send Twitter/X DM to ${prospect.name}`,
+      detail: `${prospect.brief_topic || "no brief topic"} · manual first touch`,
+      kind: "twitter",
+      prospect,
+      task,
+    });
+  }
+
+  for (const prospect of sections.missingBriefUrls.filter((item) => item.status !== "connection_sent")) {
+    todos.push({
+      key: `brief-url-${prospect.id}`,
+      priority: 40,
+      title: `Add brief URL for ${prospect.name}`,
+      detail: `Prepare ${prospect.brief_topic || "brief"} before first message`,
+      kind: "brief",
+      prospect,
+    });
+  }
+
+  for (const prospect of sections.pendingConnections) {
+    const watchTask = watchAcceptanceTasksByProspectId.get(prospect.id);
+    if (!isPendingCheckDue(prospect, watchTask, today)) continue;
+
+    todos.push({
+      key: `pending-check-${prospect.id}`,
+      priority: prospect.pending_checked_at ? 60 : 50,
+      title: `Check pending connection for ${prospect.name}`,
+      detail: prospect.pending_checked_at
+        ? `Last checked ${formatRelativeAgeForDashboard(prospect.pending_checked_at)}`
+        : `Never checked · sent ${prospect.connection_sent_date || "unknown date"}`,
+      kind: "pending",
+      prospect,
+    });
+  }
+
+  for (const prospect of sections.pendingConnectionsStandby) {
+    const watchTask = watchAcceptanceTasksByProspectId.get(prospect.id);
+    if (!isPendingCheckDue(prospect, watchTask, today)) continue;
+
+    todos.push({
+      key: `pending-standby-${prospect.id}`,
+      priority: prospect.pending_checked_at ? 72 : 68,
+      title: `Review standby pending for ${prospect.name}`,
+      detail: prospect.pending_checked_at
+        ? `Standby pending · last checked ${formatRelativeAgeForDashboard(prospect.pending_checked_at)}`
+        : `Standby pending · sent ${prospect.connection_sent_date || "unknown date"}`,
+      kind: "pending",
+      prospect,
+    });
+  }
+
+  return todos.sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
+}
+
 async function getFunnelStats(workspaceId: number, firstDay: string, today: string): Promise<DashboardFunnelStats> {
-  const [prospectsAdded, firstTouchesSent, linkedinAccepted, reportsSent, repliesReceived, activeConversations] = await Promise.all([
+  const [prospectsAdded, firstTouchesSent, linkedinAccepted, reportsSent, prospectsReplied, activeConversations] = await Promise.all([
     countOne(`
       SELECT COUNT(*) AS count
       FROM prospects
@@ -961,14 +1164,7 @@ async function getFunnelStats(workspaceId: number, firstDay: string, today: stri
         AND date(accepted_date) <= ?
     `, [workspaceId, firstDay, today]),
     countReportsSent(workspaceId, firstDay, today),
-    countOne(`
-      SELECT COUNT(*) AS count
-      FROM replies r
-      JOIN prospects p ON p.id = r.prospect_id
-      WHERE p.workspace_id = ?
-        AND date(r.created_at) >= ?
-        AND date(r.created_at) <= ?
-    `, [workspaceId, firstDay, today]),
+    countReplyingProspects(workspaceId, firstDay, today),
     countOne(`
       SELECT COUNT(*) AS count
       FROM prospects
@@ -978,11 +1174,11 @@ async function getFunnelStats(workspaceId: number, firstDay: string, today: stri
         AND date(updated_at) <= ?
     `, [workspaceId, firstDay, today]),
   ]);
-  return { prospectsAdded, firstTouchesSent, linkedinAccepted, reportsSent, repliesReceived, activeConversations };
+  return { prospectsAdded, firstTouchesSent, linkedinAccepted, reportsSent, prospectsReplied, activeConversations };
 }
 
 async function getRateStats(workspaceId: number, firstDay: string, today: string): Promise<DashboardRateStats> {
-  const [linkedinConnectionsSent, linkedinAccepted, firstMessagesSent, repliesReceived, activeConversations] = await Promise.all([
+  const [linkedinConnectionsSent, linkedinAccepted, firstMessagesSent, prospectsReplied, activeConversations] = await Promise.all([
     countOne(`
       SELECT COUNT(*) AS count
       FROM events e
@@ -1011,14 +1207,7 @@ async function getRateStats(workspaceId: number, firstDay: string, today: string
         AND date(e.happened_at) >= ?
         AND date(e.happened_at) <= ?
     `, [workspaceId, firstDay, today]),
-    countOne(`
-      SELECT COUNT(*) AS count
-      FROM replies r
-      JOIN prospects p ON p.id = r.prospect_id
-      WHERE p.workspace_id = ?
-        AND date(r.created_at) >= ?
-        AND date(r.created_at) <= ?
-    `, [workspaceId, firstDay, today]),
+    countReplyingProspects(workspaceId, firstDay, today),
     countOne(`
       SELECT COUNT(*) AS count
       FROM prospects
@@ -1030,11 +1219,11 @@ async function getRateStats(workspaceId: number, firstDay: string, today: string
   ]);
   return {
     linkedinAcceptRate: ratio(linkedinAccepted, linkedinConnectionsSent),
-    replyRate: ratio(repliesReceived, firstMessagesSent),
-    activeConversationRate: ratio(activeConversations, repliesReceived),
+    replyRate: ratio(prospectsReplied, firstMessagesSent),
+    activeConversationRate: ratio(activeConversations, prospectsReplied),
     linkedinConnectionsSent,
     firstMessagesSent,
-    repliesReceived,
+    prospectsReplied,
   };
 }
 
@@ -1096,7 +1285,7 @@ async function getChannelBreakdown(workspaceId: number, firstDay: string, today:
     channel: "linkedin" | "twitter";
     prospects: number;
     first_touches: number;
-    replies: number;
+    prospects_replied: number;
     active_conversations: number;
   }>(`
     SELECT
@@ -1111,27 +1300,28 @@ async function getChannelBreakdown(workspaceId: number, firstDay: string, today:
       COUNT(DISTINCT CASE
         WHEN date(r.created_at) >= ?
           AND date(r.created_at) <= ?
-        THEN r.id
-      END) AS replies,
+        THEN r.prospect_id
+      END) AS prospects_replied,
       COUNT(DISTINCT CASE WHEN p.status IN ('conversation_active', 'reply_sent') THEN p.id END) AS active_conversations
     FROM prospects p
     LEFT JOIN events e ON e.prospect_id = p.id
     LEFT JOIN replies r ON r.prospect_id = p.id
     WHERE p.workspace_id = ?
+      AND ${activeProspectWhereSql("p")}
     GROUP BY p.source_channel
-  `, [firstDay, today, firstDay, today, workspaceId]);
+  `, [firstDay, today, firstDay, today, workspaceId, ...activeProspectWhereArgs()]);
   const byChannel = new Map(rows.map((row) => [row.channel || "linkedin", row]));
   return (["linkedin", "twitter"] as const).map((channel) => {
     const row = byChannel.get(channel);
     const firstTouches = Number(row?.first_touches || 0);
-    const replies = Number(row?.replies || 0);
+    const prospectsReplied = Number(row?.prospects_replied || 0);
     return {
       channel,
       prospects: Number(row?.prospects || 0),
       firstTouches,
-      replies,
+      prospectsReplied,
       activeConversations: Number(row?.active_conversations || 0),
-      replyRate: ratio(replies, firstTouches),
+      replyRate: ratio(prospectsReplied, firstTouches),
     };
   });
 }
@@ -1141,7 +1331,7 @@ async function getTopicPerformance(workspaceId: number, firstDay: string, today:
     topic: string;
     prospects: number;
     first_touches: number;
-    replies: number;
+    prospects_replied: number;
     active_conversations: number;
   }>(`
     SELECT
@@ -1156,30 +1346,42 @@ async function getTopicPerformance(workspaceId: number, firstDay: string, today:
       COUNT(DISTINCT CASE
         WHEN date(r.created_at) >= ?
           AND date(r.created_at) <= ?
-        THEN r.id
-      END) AS replies,
+        THEN r.prospect_id
+      END) AS prospects_replied,
       COUNT(DISTINCT CASE WHEN p.status IN ('conversation_active', 'reply_sent') THEN p.id END) AS active_conversations
     FROM prospects p
     LEFT JOIN briefs b ON b.prospect_id = p.id
     LEFT JOIN events e ON e.prospect_id = p.id
     LEFT JOIN replies r ON r.prospect_id = p.id
     WHERE p.workspace_id = ?
+      AND ${activeProspectWhereSql("p")}
     GROUP BY topic
-    ORDER BY replies DESC, first_touches DESC, prospects DESC, topic
+    ORDER BY prospects_replied DESC, first_touches DESC, prospects DESC, topic
     LIMIT 8
-  `, [firstDay, today, firstDay, today, workspaceId]);
+  `, [firstDay, today, firstDay, today, workspaceId, ...activeProspectWhereArgs()]);
   return rows.map((row) => {
     const firstTouches = Number(row.first_touches || 0);
-    const replies = Number(row.replies || 0);
+    const prospectsReplied = Number(row.prospects_replied || 0);
     return {
       topic: row.topic,
       prospects: Number(row.prospects || 0),
       firstTouches,
-      replies,
+      prospectsReplied,
       activeConversations: Number(row.active_conversations || 0),
-      replyRate: ratio(replies, firstTouches),
+      replyRate: ratio(prospectsReplied, firstTouches),
     };
   });
+}
+
+async function countReplyingProspects(workspaceId: number, firstDay: string, today: string) {
+  return await countOne(`
+    SELECT COUNT(DISTINCT r.prospect_id) AS count
+    FROM replies r
+    JOIN prospects p ON p.id = r.prospect_id
+    WHERE p.workspace_id = ?
+      AND date(r.created_at) >= ?
+      AND date(r.created_at) <= ?
+  `, [workspaceId, firstDay, today]);
 }
 
 async function countReportsSent(workspaceId: number, firstDay: string, today: string) {
@@ -1273,6 +1475,34 @@ export async function runProspectAction(formData: FormData, workspaceId?: number
       await upsertGeneratedMessage(id, "twitter_followup", generated.twitterFollowupMessage, null);
     }
     await addEvent(id, "messages_regenerated_from_evidence", "Messages regenerated from latest captured evidence.", today);
+    return;
+  }
+
+  if (intent === "regenerateMessageWithHint") {
+    const messageType = String(formData.get("messageType") || "").trim();
+    const direction = String(formData.get("direction") || "").trim();
+    const generated = await generateMessagesFromLatestEvidence(id, direction);
+    const targetMap: Record<string, string | undefined> = {
+      connection: generated.connectionMessage?.slice(0, 300),
+      report: generated.reportMessage,
+      report_no_note: generated.noNoteReportMessage,
+      followup: generated.followupMessage,
+      twitter_dm: generated.twitterDmMessage,
+      twitter_followup: generated.twitterFollowupMessage,
+    };
+    const nextContent = targetMap[messageType];
+    if (!nextContent) {
+      throw new Error(`No regenerated content available for ${messageType}`);
+    }
+    await upsertGeneratedMessage(id, messageType, nextContent, null);
+    await addEvent(
+      id,
+      "message_regenerated_with_hint",
+      direction
+        ? `${messageType} regenerated with hint: ${direction}`
+        : `${messageType} regenerated from latest captured evidence.`,
+      today,
+    );
     return;
   }
 
@@ -1924,6 +2154,28 @@ async function seedWorkspaceDefaults(db: Client) {
       defaultModel,
       0.2,
     );
+    await seedPromptTemplate(
+      db,
+      workspace.id,
+      "linkedin",
+      "brief_topic_refinement",
+      isNarralens ? "LinkedIn brief topic refinement - Narralens" : "LinkedIn brief topic refinement",
+      DEFAULT_NO_NOTE_SYSTEM_PROMPT,
+      isNarralens ? DEFAULT_NARRALENS_BRIEF_TOPIC_REFINEMENT_USER_PROMPT : DEFAULT_BRIEF_TOPIC_REFINEMENT_USER_PROMPT,
+      defaultModel,
+      0.3,
+    );
+    await seedPromptTemplate(
+      db,
+      workspace.id,
+      "twitter",
+      "brief_topic_refinement",
+      isNarralens ? "Twitter/X brief topic refinement - Narralens" : "Twitter/X brief topic refinement",
+      DEFAULT_NO_NOTE_SYSTEM_PROMPT,
+      isNarralens ? DEFAULT_NARRALENS_BRIEF_TOPIC_REFINEMENT_USER_PROMPT : DEFAULT_BRIEF_TOPIC_REFINEMENT_USER_PROMPT,
+      defaultModel,
+      0.3,
+    );
   }
 }
 
@@ -2028,6 +2280,10 @@ function todayIso() {
   return formatter.format(new Date());
 }
 
+const PENDING_ACTIVE_RECHECK_MS = 4 * 60 * 60 * 1000;
+const PENDING_LONG_TAIL_AFTER_MS = 48 * 60 * 60 * 1000;
+const PENDING_STANDBY_RECHECK_MS = 72 * 60 * 60 * 1000;
+
 function addDaysIso(dateIso: string, days: number) {
   const date = new Date(`${dateIso}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
@@ -2040,6 +2296,78 @@ function shortDayLabel(dateIso: string) {
 
 function escapeLike(value: string) {
   return value.replace(/[\\%_]/g, "\\$&");
+}
+
+function pendingTodoAgeMs(
+  prospect: Pick<Prospect, "pending_checked_at" | "connection_sent_date">,
+  watchTask: Pick<Task, "created_at"> | undefined,
+  today: string,
+) {
+  if (prospect.pending_checked_at) return dateAgeMs(prospect.pending_checked_at);
+  if (watchTask?.created_at) return dateAgeMs(watchTask.created_at);
+  if (prospect.connection_sent_date && prospect.connection_sent_date < today) return PENDING_ACTIVE_RECHECK_MS;
+  if (prospect.connection_sent_date) return 0;
+  return null;
+}
+
+function pendingSentAgeMs(prospect: Pick<Prospect, "connection_sent_date">, watchTask?: Pick<Task, "created_at">) {
+  if (watchTask?.created_at) return dateAgeMs(watchTask.created_at);
+  return dateAgeMs(prospect.connection_sent_date);
+}
+
+function pendingReviewBucket(
+  prospect: Pick<Prospect, "connection_sent_date">,
+  watchTask?: Pick<Task, "created_at">,
+) {
+  const sentAge = pendingSentAgeMs(prospect, watchTask);
+  return sentAge !== null && sentAge >= PENDING_LONG_TAIL_AFTER_MS ? "standby" : "active";
+}
+
+function pendingReviewDelayMs(
+  prospect: Pick<Prospect, "connection_sent_date">,
+  watchTask?: Pick<Task, "created_at">,
+) {
+  return pendingReviewBucket(prospect, watchTask) === "standby"
+    ? PENDING_STANDBY_RECHECK_MS
+    : PENDING_ACTIVE_RECHECK_MS;
+}
+
+function isPendingCheckDue(
+  prospect: Pick<Prospect, "pending_checked_at" | "connection_sent_date">,
+  watchTask: Pick<Task, "created_at"> | undefined,
+  today: string,
+) {
+  const pendingAge = pendingTodoAgeMs(prospect, watchTask, today);
+  if (pendingAge === null) return false;
+  return pendingAge >= pendingReviewDelayMs(prospect, watchTask);
+}
+
+function dateAgeMs(value: string | null) {
+  if (!value) return null;
+  const normalized = value.includes("T")
+    ? value
+    : value.includes(" ")
+      ? `${value.replace(" ", "T")}Z`
+      : `${value}T00:00:00Z`;
+  const timestamp = Date.parse(normalized);
+  if (Number.isNaN(timestamp)) return null;
+  return Date.now() - timestamp;
+}
+
+function formatRelativeAgeForDashboard(value: string) {
+  const ageMs = dateAgeMs(value);
+  if (ageMs === null) return value;
+  const minutes = Math.max(0, Math.round(ageMs / 60000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function serverOutreachModeLabel(prospect: Prospect) {
+  if (prospect.source_channel === "twitter") return "Twitter/X";
+  if (prospect.outreach_mode === "no_note") return "LinkedIn no-note";
+  return "LinkedIn with note";
 }
 
 function withDerivedMessages(prospect: Prospect): Prospect {
@@ -2201,7 +2529,10 @@ async function generateNoNoteRewrite(prospectId: number): Promise<NoNoteRewrite>
   return normalizeNoNoteRewrite(parsed, prospect, workspace.product_name);
 }
 
-async function generateMessagesFromLatestEvidence(prospectId: number): Promise<MessageRegeneration> {
+async function generateMessagesFromLatestEvidence(
+  prospectId: number,
+  direction = "",
+): Promise<MessageRegeneration> {
   loadLocalEnv();
   const detail = await getProspectDetail(prospectId);
   if (!detail) throw new Error("Prospect not found");
@@ -2236,7 +2567,14 @@ async function generateMessagesFromLatestEvidence(prospectId: number): Promise<M
         payload: null,
       };
 
-  const prompt = renderMessageRegenerationPrompt(template.user_prompt, workspace, docs, prospect, evidence);
+  const prompt = renderMessageRegenerationPrompt(
+    template.user_prompt,
+    workspace,
+    docs,
+    prospect,
+    evidence,
+    direction,
+  );
   const model = template.model || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -2274,12 +2612,105 @@ async function generateMessagesFromLatestEvidence(prospectId: number): Promise<M
     workspaceId: workspace.id,
     promptTemplateId: template.id,
     prospectId: prospect.id,
-    inputJson: { prompt, prospectId: prospect.id, evidenceId: latestEvidence?.id || null },
+    inputJson: { prompt, prospectId: prospect.id, evidenceId: latestEvidence?.id || null, direction },
     outputJson: parsed,
     model,
   });
 
   return normalizeMessageRegeneration(parsed, prospect, workspace.product_name, workspace.default_language || "en");
+}
+
+export async function generateBriefTopicSuggestions(
+  prospectId: number,
+  direction: string,
+): Promise<BriefTopicSuggestion[]> {
+  loadLocalEnv();
+  const detail = await getProspectDetail(prospectId);
+  if (!detail) throw new Error("Prospect not found");
+
+  const { prospect, latestEvidence } = detail;
+  const workspace = prospect.workspace_id
+    ? await one<Workspace>("SELECT * FROM workspaces WHERE id = ?", [prospect.workspace_id])
+    : await getActiveWorkspace();
+  if (!workspace) throw new Error("Workspace not found.");
+
+  const channel = prospect.source_channel === "twitter" ? "twitter" : "linkedin";
+  const [template, docs] = await Promise.all([
+    getActivePromptTemplate(workspace.id, channel, "brief_topic_refinement"),
+    getWorkspaceDocs(workspace.id),
+  ]);
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    return fallbackBriefTopicSuggestions(prospect, direction, workspace.product_name);
+  }
+
+  const evidence = latestEvidence
+    ? {
+        id: latestEvidence.id,
+        sourceChannel: latestEvidence.source_channel,
+        captureSource: latestEvidence.capture_source,
+        createdAt: latestEvidence.created_at,
+        summaryText: latestEvidence.summary_text,
+        payload: safeJsonParse(latestEvidence.payload_json),
+      }
+    : {
+        sourceChannel: channel,
+        captureSource: "fallback_current_prospect",
+        summaryText: "No extension capture is stored for this prospect yet. Use the current prospect fields as fallback context.",
+        payload: null,
+      };
+
+  const prompt = renderBriefTopicRefinementPrompt(
+    template.user_prompt,
+    workspace,
+    docs,
+    prospect,
+    evidence,
+    direction,
+  );
+  const model = template.model || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:4377",
+      "X-Title": "Outreach App",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: template.temperature,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: template.system_prompt,
+        },
+        { role: "user", content: prompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const detailText = await response.text();
+    throw new Error(`OpenRouter request failed (${response.status}): ${detailText.slice(0, 600)}`);
+  }
+
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenRouter returned an empty response.");
+
+  const parsed = parseJson(content);
+  await recordPromptRun({
+    workspaceId: workspace.id,
+    promptTemplateId: template.id,
+    prospectId: prospect.id,
+    inputJson: { prompt, prospectId: prospect.id, evidenceId: latestEvidence?.id || null, direction },
+    outputJson: parsed,
+    model,
+  });
+
+  return normalizeBriefTopicSuggestions(parsed, prospect, direction, workspace.product_name);
 }
 
 function renderMessageRegenerationPrompt(
@@ -2288,8 +2719,9 @@ function renderMessageRegenerationPrompt(
   docs: WorkspaceDoc[],
   prospect: Prospect,
   evidence: unknown,
+  direction = "",
 ) {
-  return template
+  const basePrompt = template
     .replaceAll("{{productName}}", workspace.product_name)
     .replaceAll("{{workspaceName}}", workspace.name)
     .replaceAll("{{defaultLanguage}}", workspace.default_language || "en")
@@ -2320,6 +2752,46 @@ function renderMessageRegenerationPrompt(
       twitterDm: prospect.twitter_dm_message,
       twitterFollowup: prospect.twitter_followup_message,
     }, null, 2));
+
+  if (basePrompt.includes("{{direction}}")) {
+    return basePrompt.replaceAll("{{direction}}", direction || "(none provided)");
+  }
+
+  return `${basePrompt}
+
+USER DIRECTION
+${direction || "(none provided)"}`;
+}
+
+function renderBriefTopicRefinementPrompt(
+  template: string,
+  workspace: Workspace,
+  docs: WorkspaceDoc[],
+  prospect: Prospect,
+  evidence: unknown,
+  direction: string,
+) {
+  return template
+    .replaceAll("{{productName}}", workspace.product_name)
+    .replaceAll("{{workspaceName}}", workspace.name)
+    .replaceAll("{{defaultLanguage}}", workspace.default_language || "en")
+    .replaceAll("{{workspaceDocs}}", formatWorkspaceDocs(docs))
+    .replaceAll("{{prospectJson}}", JSON.stringify({
+      id: prospect.id,
+      name: prospect.name,
+      position: prospect.position,
+      about: prospect.about,
+      profileUrl: prospect.profile_url,
+      sourceChannel: prospect.source_channel,
+      priorityTag: prospect.priority_tag,
+      wave: prospect.wave,
+      rationale: prospect.rationale,
+      recommendedTemplate: prospect.recommended_template,
+      currentBriefTopic: prospect.brief_topic,
+      currentBriefPreparation: prospect.preparation_notes,
+    }, null, 2))
+    .replaceAll("{{evidenceJson}}", JSON.stringify(evidence, null, 2))
+    .replaceAll("{{direction}}", direction || "(none provided)");
 }
 
 function renderNoNoteRewritePrompt(template: string, workspace: Workspace, docs: WorkspaceDoc[], prospect: Prospect) {
@@ -2414,6 +2886,91 @@ function normalizeMessageRegeneration(
       briefTopic: prospect.brief_topic,
     }),
   };
+}
+
+function normalizeBriefTopicSuggestions(
+  value: unknown,
+  prospect: Prospect,
+  direction: string,
+  productName = "Tempolis",
+) {
+  const rawSuggestions = Array.isArray((value as { suggestions?: unknown[] })?.suggestions)
+    ? ((value as { suggestions: unknown[] }).suggestions)
+    : [];
+
+  const normalized = rawSuggestions
+    .map((item) => {
+      const candidate = item as Partial<BriefTopicSuggestion>;
+      const topic = trimWords(String(candidate.topic || ""), 3);
+      const rationale = String(candidate.rationale || "").trim();
+      const preparationNotes = String(candidate.preparationNotes || "").trim();
+      if (!topic) return null;
+      return {
+        topic,
+        rationale: rationale || `Alternative angle for ${prospect.name}.`,
+        preparationNotes,
+      } satisfies BriefTopicSuggestion;
+    })
+    .filter((item): item is BriefTopicSuggestion => Boolean(item));
+
+  if (normalized.length) {
+    return dedupeBriefTopicSuggestions(normalized).slice(0, 3);
+  }
+
+  return fallbackBriefTopicSuggestions(prospect, direction, productName);
+}
+
+function dedupeBriefTopicSuggestions(items: BriefTopicSuggestion[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = item.topic.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function fallbackBriefTopicSuggestions(
+  prospect: Prospect,
+  direction: string,
+  productName = "Tempolis",
+): BriefTopicSuggestion[] {
+  const currentTopic = trimWords(prospect.brief_topic || "", 3);
+  const directionText = direction.toLowerCase();
+  const variants = new Set<string>();
+
+  if (currentTopic) {
+    variants.add(currentTopic);
+    const parts = currentTopic.split(/\s+/);
+    if (parts.length >= 2) variants.add(parts.slice(-2).join(" "));
+    if (parts.length >= 2) variants.add(parts.slice(0, 2).join(" "));
+    if (/\beu\b/i.test(currentTopic)) variants.add(trimWords(currentTopic.replace(/\beu\b/gi, ""), 3));
+    if (/\bcircular\b/i.test(currentTopic)) variants.add(trimWords(currentTopic.replace(/\bcircular\b/gi, ""), 3));
+  }
+
+  if (directionText.includes("circular")) variants.add("circular economy");
+  if (directionText.includes("econom")) variants.add("market dynamics");
+  if (directionText.includes("broader") && currentTopic) variants.add(trimWords(currentTopic.replace(/\b(circular|digital|strategic|public)\b/gi, ""), 3));
+  if (!variants.size) {
+    variants.add(isNarralensProduct(productName) ? "campaign narrative" : "EU regulation");
+    variants.add(isNarralensProduct(productName) ? "competitor moves" : "policy strategy");
+    variants.add(isNarralensProduct(productName) ? "brand reaction" : "market access");
+  }
+
+  return Array.from(variants)
+    .map((topic) => trimWords(topic, 3))
+    .filter(Boolean)
+    .filter((topic, index, all) => all.indexOf(topic) === index)
+    .slice(0, 3)
+    .map((topic) => ({
+      topic,
+      rationale: currentTopic && topic !== currentTopic
+        ? `A more usable first-contact angle than "${currentTopic}" for this profile.`
+        : `Alternative topic generated from the current profile context.`,
+      preparationNotes: direction
+        ? `Direction requested: ${direction}`
+        : `Refined from the current profile context and existing brief angle.`,
+    }));
 }
 
 function sanitizeGeneratedMessage(
@@ -2580,6 +3137,85 @@ const DEFAULT_LINKEDIN_BATCH_SYSTEM_PROMPT = "You are a strict JSON-producing ou
 const DEFAULT_TWITTER_BATCH_SYSTEM_PROMPT = "You are a strict JSON-producing outreach analyst. Return only valid JSON. Never include markdown.";
 
 const DEFAULT_NO_NOTE_SYSTEM_PROMPT = "You are a strict JSON-producing outreach copywriter. Return only valid JSON. Never include markdown.";
+
+const DEFAULT_BRIEF_TOPIC_REFINEMENT_USER_PROMPT = `
+Suggest better {{productName}} brief topics for this prospect.
+
+TASK
+- Use the workspace docs, current prospect context, current brief topic, and latest captured evidence.
+- Return exactly 3 alternative brief topics.
+- Write all rationales and preparation notes in {{defaultLanguage}} by default.
+- Each topic must be 1 to 3 words only.
+- For Tempolis-style work, prefer concrete policy/public-affairs subjects that could realistically make a strong first brief.
+- A good topic is often broader and more usable than the first detected niche, but still specific enough to feel intentional.
+- Treat reposts, likes, comments, and visible activity as signals of interest only, not proof that the prospect owns that topic professionally.
+- If the user gives a direction, follow it.
+- Do not suggest abstract labels like "public policy", "communications", "regulation", or "strategy" on their own.
+- Do not simply echo the current topic unless it is still clearly one of the top 3 options.
+- For each suggestion, include short preparation notes explaining what angle to take.
+
+OUTPUT JSON SHAPE
+{
+  "suggestions": [
+    {
+      "topic": string,
+      "rationale": string,
+      "preparationNotes": string
+    }
+  ]
+}
+
+WORKSPACE DOCS
+{{workspaceDocs}}
+
+PROSPECT CONTEXT
+{{prospectJson}}
+
+LATEST CAPTURED EVIDENCE
+{{evidenceJson}}
+
+USER DIRECTION
+{{direction}}
+`;
+
+const DEFAULT_NARRALENS_BRIEF_TOPIC_REFINEMENT_USER_PROMPT = `
+Suggest better {{productName}} brief topics for this prospect.
+
+TASK
+- Use the workspace docs, current prospect context, current brief topic, and latest captured evidence.
+- Return exactly 3 alternative brief topics.
+- Write all rationales and preparation notes in {{defaultLanguage}} by default.
+- Each topic must be 1 to 3 words only.
+- Prefer topics that look like real {{productName}} searches: a brand, company, campaign, launch, competitor, public figure, controversy, platform change, or concrete narrative debate.
+- Avoid abstract topics like brand perception, communications, marketing, narrative intelligence, or campaign monitoring.
+- If the user gives a direction, follow it.
+- Treat reposts, likes, and visible activity as interest/public context only, not proof that the prospect professionally owns that topic.
+- Each suggestion should feel credible for a first brief and specific enough to discuss with the prospect.
+- For each suggestion, include short preparation notes explaining what angle to take.
+
+OUTPUT JSON SHAPE
+{
+  "suggestions": [
+    {
+      "topic": string,
+      "rationale": string,
+      "preparationNotes": string
+    }
+  ]
+}
+
+WORKSPACE DOCS
+{{workspaceDocs}}
+
+PROSPECT CONTEXT
+{{prospectJson}}
+
+LATEST CAPTURED EVIDENCE
+{{evidenceJson}}
+
+USER DIRECTION
+{{direction}}
+`;
 
 const DEFAULT_LINKEDIN_BATCH_USER_PROMPT = `
 Analyze this new {{productName}} LinkedIn outreach batch.
