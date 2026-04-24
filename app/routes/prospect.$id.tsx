@@ -68,21 +68,24 @@ export async function action({ request, params }: Route.ActionArgs) {
 
 export default function ProspectDetail() {
   const { detail } = useLoaderData<typeof loader>();
-  const { prospect, tasks, events, replies, today } = detail;
+  const { prospect, tasks, events, replies, latestEvidence, today } = detail;
   const openTasks = tasks.filter((task) => task.status === "open");
   const doneTasks = tasks.filter((task) => task.status !== "open");
   const showConnectionNote =
     prospect.outreach_mode !== "no_note" || prospect.connection_note_sent === 1;
   const connectionLocked = Boolean(prospect.connection_sent_date);
   const reportLocked = Boolean(prospect.report_sent_date);
+  const isOutreachReady =
+    !["skipped", "saved_for_later", "archived_declined", "archived"].includes(prospect.status) &&
+    !(prospect.status === "to_contact" && !prospect.contact_now);
   const archiveMode =
     Boolean(prospect.report_sent_date) ||
     ["reply_sent", "followup_sent"].includes(prospect.status);
 
   const defaultOpen = [
-    prospect.source_channel === "linkedin" && !archiveMode ? "outreach-mode" : null,
+    prospect.source_channel === "linkedin" && !archiveMode && isOutreachReady ? "outreach-mode" : null,
     !archiveMode ? "brief" : null,
-    !archiveMode ? "messages" : null,
+    !archiveMode && isOutreachReady ? "messages" : null,
     prospect.notes ? "notes" : null,
   ].filter((item): item is string => Boolean(item));
 
@@ -146,7 +149,7 @@ export default function ProspectDetail() {
             </Card>
 
             <Accordion type="multiple" defaultValue={defaultOpen} className="space-y-4">
-              {prospect.source_channel === "linkedin" ? (
+              {prospect.source_channel === "linkedin" && isOutreachReady ? (
                 <SectionAccordion
                   value="outreach-mode"
                   title="Outreach mode"
@@ -249,74 +252,116 @@ export default function ProspectDetail() {
                 </div>
               </SectionAccordion>
 
-              <SectionAccordion
-                value="messages"
-                title="Messages"
-                detail={
-                  prospect.source_channel === "twitter"
-                    ? "Copy exact Twitter/X copy."
-                    : "Copy exact LinkedIn copy."
-                }
-              >
-                {prospect.source_channel === "linkedin" ? (
+              {isOutreachReady ? (
+                <SectionAccordion
+                  value="messages"
+                  title="Messages"
+                  detail={
+                    prospect.source_channel === "twitter"
+                      ? "Copy exact Twitter/X copy."
+                      : "Copy exact LinkedIn copy."
+                  }
+                >
                   <div className="mb-4 flex flex-wrap gap-2 rounded-lg border bg-muted/30 p-3">
                     <ActionButton
-                      intent="regenerateSaferCopy"
+                      intent="regenerateFromLatestCapture"
                       prospectId={prospect.id}
-                      label="Regenerate safer copy"
+                      label={latestEvidence ? "Regenerate from latest capture" : "Regenerate from current context"}
                       icon={<RefreshCw size={16} />}
                       variant="outline"
                     />
+                    {prospect.source_channel === "linkedin" ? (
+                      <ActionButton
+                        intent="regenerateSaferCopy"
+                        prospectId={prospect.id}
+                        label="No-note rewrite"
+                        icon={<RefreshCw size={16} />}
+                        variant="outline"
+                      />
+                    ) : null}
                   </div>
-                ) : null}
-                {prospect.source_channel === "twitter" ? (
-                  <div className="grid gap-3">
-                    <MessageEditor
-                      prospectId={prospect.id}
-                      title="Twitter/X DM"
-                      type="twitter_dm"
-                      content={prospect.twitter_dm_message}
-                      locked={Boolean(prospect.twitter_contacted_date)}
-                    />
-                    <MessageEditor
-                      prospectId={prospect.id}
-                      title="Twitter/X follow-up J+2"
-                      type="twitter_followup"
-                      content={prospect.twitter_followup_message}
-                      locked={Boolean(prospect.twitter_followup_sent_date)}
-                    />
-                  </div>
-                ) : (
-                  <div className="grid gap-3">
-                    {showConnectionNote ? (
+                  {prospect.source_channel === "twitter" ? (
+                    <div className="grid gap-3">
                       <MessageEditor
                         prospectId={prospect.id}
-                        title="Connection note"
-                        type="connection"
-                        content={prospect.connection_message}
-                        locked={connectionLocked}
+                        title="Twitter/X DM"
+                        type="twitter_dm"
+                        content={prospect.twitter_dm_message}
+                        locked={Boolean(prospect.twitter_contacted_date)}
                       />
-                    ) : (
-                      <NoNoteCallout />
-                    )}
-                    <MessageEditor
-                      prospectId={prospect.id}
-                      title={
-                        prospect.outreach_mode === "no_note"
-                          ? "First message after acceptance"
-                          : "After acceptance"
-                      }
-                      type={prospect.outreach_mode === "no_note" ? "report_no_note" : "report"}
-                      content={prospect.post_acceptance_message}
-                      locked={reportLocked}
-                    />
-                    <MessageEditor
-                      prospectId={prospect.id}
-                      title="Follow-up J+2"
-                      type="followup"
-                      content={prospect.followup_message}
-                    />
+                      <MessageEditor
+                        prospectId={prospect.id}
+                        title="Twitter/X follow-up J+2"
+                        type="twitter_followup"
+                        content={prospect.twitter_followup_message}
+                        locked={Boolean(prospect.twitter_followup_sent_date)}
+                      />
+                    </div>
+                  ) : (
+                    <div className="grid gap-3">
+                      {showConnectionNote ? (
+                        <MessageEditor
+                          prospectId={prospect.id}
+                          title="Connection note"
+                          type="connection"
+                          content={prospect.connection_message}
+                          locked={connectionLocked}
+                        />
+                      ) : (
+                        <NoNoteCallout />
+                      )}
+                      <MessageEditor
+                        prospectId={prospect.id}
+                        title={
+                          prospect.outreach_mode === "no_note"
+                            ? "First message after acceptance"
+                            : "After acceptance"
+                        }
+                        type={prospect.outreach_mode === "no_note" ? "report_no_note" : "report"}
+                        content={prospect.post_acceptance_message}
+                        locked={reportLocked}
+                      />
+                      <MessageEditor
+                        prospectId={prospect.id}
+                        title="Follow-up J+2"
+                        type="followup"
+                        content={prospect.followup_message}
+                      />
+                    </div>
+                  )}
+                </SectionAccordion>
+              ) : (
+                <SectionAccordion
+                  value="messages-disabled"
+                  title="Messages"
+                  detail="This prospect is not outreach-ready."
+                >
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    No outreach copy is generated for prospects marked `SKIP`, `SAVE`, archived, or not contactable now.
                   </div>
+                </SectionAccordion>
+              )}
+            </Accordion>
+
+            <Accordion type="multiple">
+              <SectionAccordion
+                value="captured-evidence"
+                title="Latest captured evidence"
+                detail={latestEvidence ? `${latestEvidence.capture_source} · ${latestEvidence.source_channel} · ${latestEvidence.created_at}` : "No extension capture stored yet."}
+              >
+                {latestEvidence ? (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="muted">{latestEvidence.capture_source}</Badge>
+                      <Badge variant="info">{latestEvidence.source_channel}</Badge>
+                      <Badge variant="muted">{latestEvidence.created_at}</Badge>
+                    </div>
+                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+                      {latestEvidence.summary_text}
+                    </pre>
+                  </div>
+                ) : (
+                  <EmptyState />
                 )}
               </SectionAccordion>
             </Accordion>

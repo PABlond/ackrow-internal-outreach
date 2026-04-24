@@ -61,6 +61,15 @@ type NoNoteRewrite = {
   followupMessage: string;
 };
 
+type MessageRegeneration = {
+  connectionMessage?: string;
+  reportMessage?: string;
+  noNoteReportMessage?: string;
+  followupMessage?: string;
+  twitterDmMessage?: string;
+  twitterFollowupMessage?: string;
+};
+
 type ReplyDraft = {
   suggestedResponse: string;
 };
@@ -121,6 +130,17 @@ export type Reply = {
   sent_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ProspectEvidence = {
+  id: number;
+  prospect_id: number;
+  workspace_id: number;
+  source_channel: "linkedin" | "twitter";
+  capture_source: string;
+  payload_json: string;
+  summary_text: string;
+  created_at: string;
 };
 
 export type DashboardStatsPoint = {
@@ -190,6 +210,24 @@ export type Workspace = {
   updated_at: string;
 };
 
+export type WorkspaceTodoSummary = {
+  workspace_id: number;
+  workspace_slug: string;
+  workspace_name: string;
+  todo_count: number;
+  overdue_count: number;
+};
+
+export type ProspectSearchResult = {
+  id: number;
+  name: string;
+  position: string | null;
+  workspace_slug: string;
+  workspace_name: string;
+  status: string;
+  source_channel: "linkedin" | "twitter";
+};
+
 export type WorkspaceDoc = {
   id: number;
   workspace_id: number;
@@ -205,7 +243,7 @@ export type PromptTemplate = {
   id: number;
   workspace_id: number;
   channel: "linkedin" | "twitter";
-  purpose: "batch_analysis" | "no_note_rewrite";
+  purpose: "batch_analysis" | "no_note_rewrite" | "message_regeneration";
   name: string;
   system_prompt: string;
   user_prompt: string;
@@ -251,15 +289,136 @@ export async function requireWorkspace(slug: string | undefined) {
 }
 
 export async function getWorkspaceShellData(slug: string | undefined) {
-  const [workspaces, activeWorkspace] = await Promise.all([getWorkspaces(), requireWorkspace(slug)]);
-  return { workspaces, activeWorkspace };
+  const [workspaces, activeWorkspace, todoSummaries] = await Promise.all([
+    getWorkspaces(),
+    requireWorkspace(slug),
+    getWorkspaceTodoSummaries(),
+  ]);
+  return { workspaces, activeWorkspace, todoSummaries };
+}
+
+export async function searchProspectsGlobally(query: string, limit = 8) {
+  const normalized = String(query || "").trim();
+  if (normalized.length < 2) return [] as ProspectSearchResult[];
+
+  const like = `%${escapeLike(normalized)}%`;
+  const prefix = `${escapeLike(normalized)}%`;
+
+  return await all<ProspectSearchResult>(`
+    SELECT
+      p.id,
+      p.name,
+      p.position,
+      w.slug AS workspace_slug,
+      w.name AS workspace_name,
+      p.status,
+      p.source_channel
+    FROM prospects p
+    JOIN workspaces w ON w.id = p.workspace_id
+    WHERE
+      p.name LIKE ? ESCAPE '\\'
+      OR COALESCE(p.position, '') LIKE ? ESCAPE '\\'
+      OR COALESCE(p.profile_url, '') LIKE ? ESCAPE '\\'
+      OR COALESCE(p.twitter_handle, '') LIKE ? ESCAPE '\\'
+    ORDER BY
+      CASE
+        WHEN lower(p.name) = lower(?) THEN 0
+        WHEN lower(p.name) LIKE lower(?) ESCAPE '\\' THEN 1
+        WHEN lower(COALESCE(p.position, '')) LIKE lower(?) ESCAPE '\\' THEN 2
+        ELSE 3
+      END,
+      CASE
+        WHEN p.status IN ('conversation_active', 'reply_sent', 'accepted', 'report_sent', 'connection_sent') THEN 0
+        WHEN p.status = 'to_contact' THEN 1
+        ELSE 2
+      END,
+      p.updated_at DESC,
+      p.created_at DESC
+    LIMIT ?
+  `, [like, like, like, like, normalized, prefix, prefix, limit]);
+}
+
+export async function getWorkspaceTodoSummaries() {
+  const today = todayIso();
+  const rows = await all<{
+    workspace_id: number;
+    workspace_slug: string;
+    workspace_name: string;
+    todo_count: number;
+    overdue_count: number;
+  }>(`
+    SELECT
+      w.id AS workspace_id,
+      w.slug AS workspace_slug,
+      w.name AS workspace_name,
+      (
+        SELECT COUNT(*)
+        FROM prospects p
+        WHERE p.workspace_id = w.id
+          AND p.status = 'accepted'
+          AND p.report_sent_date IS NULL
+      ) + (
+        SELECT COUNT(*)
+        FROM tasks t
+        JOIN prospects p ON p.id = t.prospect_id
+        WHERE p.workspace_id = w.id
+          AND t.status = 'open'
+          AND t.type IN ('send_followup', 'send_twitter_followup')
+          AND t.due_date IS NOT NULL
+          AND t.due_date <= ?
+      ) + (
+        SELECT COUNT(*)
+        FROM tasks t
+        JOIN prospects p ON p.id = t.prospect_id
+        WHERE p.workspace_id = w.id
+          AND t.status = 'open'
+          AND t.type IN ('send_connection', 'send_twitter_dm')
+      ) + (
+        SELECT COUNT(*)
+        FROM briefs b
+        JOIN prospects p ON p.id = b.prospect_id
+        WHERE p.workspace_id = w.id
+          AND p.status <> 'connection_sent'
+          AND p.status IN ('accepted')
+          AND b.topic IS NOT NULL
+          AND trim(b.topic) <> ''
+          AND (b.shared_url IS NULL OR trim(b.shared_url) = '')
+      ) + (
+        SELECT COUNT(*)
+        FROM prospects p
+        WHERE p.workspace_id = w.id
+          AND p.status = 'connection_sent'
+          AND (
+            p.pending_checked_at IS NULL
+            OR p.pending_checked_at <= datetime('now', '-4 hours')
+          )
+      ) AS todo_count,
+      (
+        SELECT COUNT(*)
+        FROM tasks t
+        JOIN prospects p ON p.id = t.prospect_id
+        WHERE p.workspace_id = w.id
+          AND t.status = 'open'
+          AND t.type IN ('send_followup', 'send_twitter_followup')
+          AND t.due_date IS NOT NULL
+          AND t.due_date < ?
+      ) AS overdue_count
+    FROM workspaces w
+    ORDER BY w.name
+  `, [today, today]);
+
+  return rows.map((row) => ({
+    ...row,
+    todo_count: Number(row.todo_count || 0),
+    overdue_count: Number(row.overdue_count || 0),
+  })) satisfies WorkspaceTodoSummary[];
 }
 
 export async function getWorkspaceDocs(workspaceId: number) {
   return await all<WorkspaceDoc>("SELECT * FROM workspace_docs WHERE workspace_id = ? ORDER BY type", [workspaceId]);
 }
 
-export async function getActivePromptTemplate(workspaceId: number, channel: "linkedin" | "twitter", purpose: "batch_analysis" | "no_note_rewrite") {
+export async function getActivePromptTemplate(workspaceId: number, channel: "linkedin" | "twitter", purpose: PromptTemplate["purpose"]) {
   const template = await one<PromptTemplate>(`
     SELECT *
     FROM prompt_templates
@@ -268,6 +427,62 @@ export async function getActivePromptTemplate(workspaceId: number, channel: "lin
   `, [workspaceId, channel, purpose]);
   if (!template) throw new Error(`Missing active prompt template for ${channel}/${purpose}.`);
   return template;
+}
+
+export async function saveProspectEvidence(input: {
+  prospectId: number;
+  workspaceId: number;
+  sourceChannel: "linkedin" | "twitter";
+  captureSource: string;
+  payload: unknown;
+}) {
+  const summaryText = summarizeEvidencePayload(input.payload, input.sourceChannel);
+  await run(`
+    INSERT INTO prospect_evidence (
+      prospect_id, workspace_id, source_channel, capture_source, payload_json, summary_text
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+  `, [
+    input.prospectId,
+    input.workspaceId,
+    input.sourceChannel,
+    input.captureSource,
+    JSON.stringify(input.payload),
+    summaryText,
+  ]);
+}
+
+export async function getLatestProspectEvidence(prospectId: number, workspaceId?: number) {
+  return await one<ProspectEvidence>(`
+    SELECT *
+    FROM prospect_evidence
+    WHERE prospect_id = ?
+      ${workspaceId ? "AND workspace_id = ?" : ""}
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `, workspaceId ? [prospectId, workspaceId] : [prospectId]);
+}
+
+function summarizeEvidencePayload(payload: unknown, sourceChannel: "linkedin" | "twitter") {
+  const input = (payload || {}) as Record<string, unknown>;
+  const parts = [
+    `Channel: ${sourceChannel}`,
+    textPart("Name", input.name),
+    textPart(sourceChannel === "twitter" ? "Handle" : "Position", sourceChannel === "twitter" ? input.twitterHandle || input.position : input.position),
+    textPart(sourceChannel === "twitter" ? "Bio" : "About", input.about),
+    textPart("Brief direction", input.briefDirection),
+    sourceChannel === "linkedin" ? textPart("Experience", input.experience, 2500) : "",
+    sourceChannel === "linkedin" ? textPart("Education", input.education, 1200) : "",
+    textPart(sourceChannel === "twitter" ? "Visible posts" : "Activity", input.activity, 3500),
+    textPart("Additional signals", input.signals, 1500),
+    textPart("Raw visible text", input.rawText, 3000),
+  ].filter(Boolean);
+  return parts.join("\n\n").slice(0, 14000);
+}
+
+function textPart(label: string, value: unknown, max = 1800) {
+  const text = String(value || "").trim();
+  return text ? `${label}:\n${text.slice(0, max)}` : "";
 }
 
 export async function recordPromptRun(input: {
@@ -480,8 +695,9 @@ export async function getProspectDetail(id: number, workspaceId?: number) {
     WHERE prospect_id = ?
     ORDER BY created_at DESC, id DESC
   `, [id]);
+  const latestEvidence = await getLatestProspectEvidence(id, workspaceId);
 
-  return { prospect: withDerivedMessages(prospect), tasks, events, replies, today: todayIso() };
+  return { prospect: withDerivedMessages(prospect), tasks, events, replies, latestEvidence, today: todayIso() };
 }
 
 export async function getDashboard(workspaceInput?: number | Workspace) {
@@ -1036,6 +1252,30 @@ export async function runProspectAction(formData: FormData, workspaceId?: number
     return;
   }
 
+  if (intent === "regenerateFromLatestCapture") {
+    const generated = await generateMessagesFromLatestEvidence(id);
+    if (generated.connectionMessage) {
+      await upsertGeneratedMessage(id, "connection", generated.connectionMessage.slice(0, 300), null);
+    }
+    if (generated.reportMessage) {
+      await upsertGeneratedMessage(id, "report", generated.reportMessage, null);
+    }
+    if (generated.noNoteReportMessage) {
+      await upsertGeneratedMessage(id, "report_no_note", generated.noNoteReportMessage, null);
+    }
+    if (generated.followupMessage) {
+      await upsertGeneratedMessage(id, "followup", generated.followupMessage, null);
+    }
+    if (generated.twitterDmMessage) {
+      await upsertGeneratedMessage(id, "twitter_dm", generated.twitterDmMessage, null);
+    }
+    if (generated.twitterFollowupMessage) {
+      await upsertGeneratedMessage(id, "twitter_followup", generated.twitterFollowupMessage, null);
+    }
+    await addEvent(id, "messages_regenerated_from_evidence", "Messages regenerated from latest captured evidence.", today);
+    return;
+  }
+
   try {
     if (intent === "deleteProspect") {
       await completeAllOpenTasks(id);
@@ -1395,6 +1635,7 @@ export async function importAnalyzedProspects(items: AnalyzedProspect[], workspa
       ]);
       const prospect = await one<{ id: number; status: string }>("SELECT id, status FROM prospects WHERE profile_url = ? AND workspace_id = ?", [item.profileUrl, workspace.id]);
       if (!prospect) continue;
+      const shouldKeepDrafts = item.contactNow && prospect.status === "to_contact";
 
       if (item.briefTopic) {
         await run(`
@@ -1406,25 +1647,34 @@ export async function importAnalyzedProspects(items: AnalyzedProspect[], workspa
             updated_at = CURRENT_TIMESTAMP
         `, [prospect.id, item.briefTopic, item.briefPreparation]);
       }
-      if (item.connectionMessage) {
-        await upsertGeneratedMessage(prospect.id, "connection", item.connectionMessage, null);
+      if (shouldKeepDrafts) {
+        if (item.connectionMessage) {
+          await upsertGeneratedMessage(prospect.id, "connection", item.connectionMessage, null);
+        }
+        if (item.reportMessage) {
+          await upsertGeneratedMessage(prospect.id, "report", item.reportMessage, null);
+        }
+        if (item.noNoteReportMessage) {
+          await upsertGeneratedMessage(prospect.id, "report_no_note", item.noNoteReportMessage, null);
+        }
+        if (item.followupMessage) {
+          await upsertGeneratedMessage(prospect.id, "followup", item.followupMessage, null);
+        }
+        if (item.twitterDmMessage) {
+          await upsertGeneratedMessage(prospect.id, "twitter_dm", item.twitterDmMessage, null);
+        }
+        if (item.twitterFollowupMessage) {
+          await upsertGeneratedMessage(prospect.id, "twitter_followup", item.twitterFollowupMessage, null);
+        }
+      } else if (prospect.status === "to_contact" || prospect.status === "saved_for_later" || prospect.status === "skipped") {
+        await clearUnsentGeneratedMessages(prospect.id);
+        if (sourceChannel === "twitter") {
+          await completeOpenTask(prospect.id, "send_twitter_dm");
+        } else {
+          await completeOpenTask(prospect.id, "send_connection");
+        }
       }
-      if (item.reportMessage) {
-        await upsertGeneratedMessage(prospect.id, "report", item.reportMessage, null);
-      }
-      if (item.noNoteReportMessage) {
-        await upsertGeneratedMessage(prospect.id, "report_no_note", item.noNoteReportMessage, null);
-      }
-      if (item.followupMessage) {
-        await upsertGeneratedMessage(prospect.id, "followup", item.followupMessage, null);
-      }
-      if (item.twitterDmMessage) {
-        await upsertGeneratedMessage(prospect.id, "twitter_dm", item.twitterDmMessage, null);
-      }
-      if (item.twitterFollowupMessage) {
-        await upsertGeneratedMessage(prospect.id, "twitter_followup", item.twitterFollowupMessage, null);
-      }
-      if (item.contactNow && status === "to_contact") {
+      if (shouldKeepDrafts) {
         if (sourceChannel === "twitter") {
           await createOpenTask(prospect.id, "send_twitter_dm", `Send Twitter/X DM to ${item.name}`, today);
         } else {
@@ -1463,7 +1713,22 @@ async function getDb() {
     const config = getDatabaseConfig();
     databaseUsesEmbeddedReplica = Boolean(config.syncUrl);
     database = createClient(config);
-    databaseReady = prepareDatabase(database);
+    databaseReady = prepareDatabase(database).catch(async (error) => {
+      if (databaseUsesEmbeddedReplica && isWalConflict(error)) {
+        console.warn("Embedded replica WAL conflict detected. Resetting local replica and syncing from Turso.");
+        database?.close();
+        resetEmbeddedReplicaFiles();
+        const retryConfig = getDatabaseConfig();
+        databaseUsesEmbeddedReplica = Boolean(retryConfig.syncUrl);
+        database = createClient(retryConfig);
+        await prepareDatabase(database);
+        return;
+      }
+      database?.close();
+      database = undefined;
+      databaseReady = undefined;
+      throw error;
+    });
   }
   await databaseReady;
   return database;
@@ -1481,7 +1746,7 @@ function getDatabaseConfig() {
     };
   }
 
-  const replicaPath = process.env.DATABASE_REPLICA_PATH || path.join(dataDir, "outreach-replica.sqlite");
+  const replicaPath = getEmbeddedReplicaPath();
   fs.mkdirSync(path.dirname(replicaPath), { recursive: true });
   return {
     url: `file:${replicaPath}`,
@@ -1498,25 +1763,52 @@ function isRemoteLibsqlUrl(url: string) {
 
 async function prepareDatabase(db: Client) {
   if (databaseUsesEmbeddedReplica) {
-    await syncDatabase("startup");
+    await syncDatabase("startup", true);
   }
   await applyMigrations(db);
   await seedWorkspaceDefaults(db);
   if (databaseUsesEmbeddedReplica) {
-    await syncDatabase("post-migration");
+    await syncDatabase("post-migration", true);
   }
 }
 
-async function syncDatabase(_reason: string) {
+async function syncDatabase(_reason: string, throwOnError = false) {
   if (!database || !databaseUsesEmbeddedReplica) return;
   if (!syncInProgress) {
     syncInProgress = database.sync().catch((error) => {
+      if (throwOnError) throw error;
       console.warn("Database sync failed:", error);
     }).finally(() => {
       syncInProgress = null;
     });
   }
   await syncInProgress;
+}
+
+function getEmbeddedReplicaPath() {
+  return process.env.DATABASE_REPLICA_PATH || path.join(dataDir, "outreach-replica.sqlite");
+}
+
+function resetEmbeddedReplicaFiles() {
+  const replicaPath = getEmbeddedReplicaPath();
+  for (const suffix of ["", "-wal", "-shm", "-info"]) {
+    try {
+      fs.rmSync(`${replicaPath}${suffix}`, { force: true });
+    } catch {
+      // Best effort cleanup; a retry will surface any real filesystem issue.
+    }
+  }
+}
+
+function isWalConflict(error: unknown): boolean {
+  let current: unknown = error;
+  while (current && typeof current === "object") {
+    const record = current as { message?: unknown; code?: unknown; cause?: unknown };
+    if (String(record.message || "").toLowerCase().includes("walconflict")) return true;
+    if (String(record.code || "").toLowerCase().includes("walconflict")) return true;
+    current = record.cause;
+  }
+  return false;
 }
 
 function scheduleDatabaseSync() {
@@ -1639,7 +1931,7 @@ async function seedPromptTemplate(
   db: Client,
   workspaceId: number,
   channel: "linkedin" | "twitter",
-  purpose: "batch_analysis" | "no_note_rewrite",
+  purpose: PromptTemplate["purpose"],
   name: string,
   systemPrompt: string,
   userPrompt: string,
@@ -1667,6 +1959,15 @@ async function createOpenTask(prospectId: number, type: string, title: string, d
   if (!existing) {
     await run("INSERT INTO tasks (prospect_id, type, title, due_date) VALUES (?, ?, ?, ?)", [prospectId, type, title, dueDate]);
   }
+}
+
+async function clearUnsentGeneratedMessages(prospectId: number) {
+  await run(`
+    DELETE FROM messages
+    WHERE prospect_id = ?
+      AND sent_date IS NULL
+      AND type IN ('connection', 'report', 'report_no_note', 'followup', 'twitter_dm', 'twitter_followup')
+  `, [prospectId]);
 }
 
 async function completeOpenTask(prospectId: number, type: string) {
@@ -1737,7 +2038,15 @@ function shortDayLabel(dateIso: string) {
   return dateIso.slice(5).replace("-", "/");
 }
 
+function escapeLike(value: string) {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
 function withDerivedMessages(prospect: Prospect): Prospect {
+  const canDeriveOutreachCopy =
+    prospect.status !== "skipped" &&
+    prospect.status !== "saved_for_later" &&
+    !(prospect.status === "to_contact" && !prospect.contact_now);
   const noNoteFallback = noNoteReportFallback(
     prospect.name,
     prospect.brief_topic,
@@ -1752,7 +2061,9 @@ function withDerivedMessages(prospect: Prospect): Prospect {
     outreach_mode: prospect.outreach_mode || "with_note",
     connection_note_sent: prospect.connection_note_sent || 0,
     post_acceptance_message:
-      prospect.outreach_mode === "no_note"
+      !canDeriveOutreachCopy
+        ? null
+        : prospect.outreach_mode === "no_note"
         ? prospect.no_note_report_message
           ? sanitizeNoNoteMessage(prospect.no_note_report_message, noNoteFallback)
           : rewriteReportForNoNote(prospect.report_message, prospect.name, prospect.brief_topic, prospect.position, prospect.about, prospect.recommended_template, prospect.workspace_name || "Tempolis")
@@ -1782,11 +2093,22 @@ function rewriteReportForNoNote(content: string | null, name: string, topic: str
 
 function noNoteReportFallback(name: string, topic: string | null, position?: string | null, about?: string | null, template?: string | null, productName = "Tempolis") {
   const firstName = name.split(/\s+/)[0] || name;
-  const briefTopic = topic || "your policy area";
-  const context = prospectContext(position, about, template);
+  const briefTopic = topic || "";
+  const context = isNarralensProduct(productName)
+    ? narralensProspectContext(position, about, template)
+    : prospectContext(position, about, template);
+  if (isNarralensProduct(productName)) {
+    return `Hi ${firstName},
+
+Thanks for connecting. I'm building ${productName} for brand, social, and PR teams, and I wanted to test whether this kind of short narrative brief could be useful${briefTopic ? `, starting with ${briefTopic}` : ""}.
+
+[shared link]
+
+If the format feels useful for campaign monitoring, client updates, or positioning work, I'd really value your blunt feedback.`;
+  }
   return `Hi ${firstName},
 
-Thanks for connecting. I'm building ${productName}, a tool for public affairs narrative briefs, and I prepared a short brief on ${briefTopic} because it seems close to your work on ${context}.
+Thanks for connecting. I'm building ${productName}, a tool for public affairs narrative briefs, and I prepared a short brief${briefTopic ? ` on ${briefTopic}` : ""} because it seems close to your work on ${context}.
 
 [shared link]
 
@@ -1802,6 +2124,18 @@ function prospectContext(position?: string | null, about?: string | null, templa
   if (/\b(communications|comms|media|narrative|reputation)\b/.test(text)) return "strategic communications";
   if (/\b(government affairs|public affairs|policy|regulatory|eu affairs|brussels)\b/.test(text)) return "public affairs and policy";
   return "policy and public affairs";
+}
+
+function narralensProspectContext(position?: string | null, about?: string | null, template?: string | null) {
+  const text = `${position || ""} ${about || ""} ${template || ""}`.toLowerCase();
+  if (/\b(agency|client|account|consult|advisory)\b/.test(text)) return "agency and client update work";
+  if (/\b(pr|communications|public relations|media)\b/.test(text)) return "PR and communications work";
+  if (/\b(brand|marketing|campaign|social|content)\b/.test(text)) return "brand and campaign work";
+  return "brand, social, or PR work";
+}
+
+function isNarralensProduct(productName: string) {
+  return productName.trim().toLowerCase() === "narralens";
 }
 
 async function generateNoNoteRewrite(prospectId: number): Promise<NoNoteRewrite> {
@@ -1867,6 +2201,127 @@ async function generateNoNoteRewrite(prospectId: number): Promise<NoNoteRewrite>
   return normalizeNoNoteRewrite(parsed, prospect, workspace.product_name);
 }
 
+async function generateMessagesFromLatestEvidence(prospectId: number): Promise<MessageRegeneration> {
+  loadLocalEnv();
+  const detail = await getProspectDetail(prospectId);
+  if (!detail) throw new Error("Prospect not found");
+
+  const { prospect, latestEvidence } = detail;
+  const workspace = prospect.workspace_id ? await one<Workspace>("SELECT * FROM workspaces WHERE id = ?", [prospect.workspace_id]) : await getActiveWorkspace();
+  if (!workspace) throw new Error("Workspace not found.");
+
+  const channel = prospect.source_channel === "twitter" ? "twitter" : "linkedin";
+  const [template, docs] = await Promise.all([
+    getActivePromptTemplate(workspace.id, channel, "message_regeneration"),
+    getWorkspaceDocs(workspace.id),
+  ]);
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing OPENROUTER_API_KEY. Add it to .env or your shell env.");
+  }
+
+  const evidence = latestEvidence
+    ? {
+        id: latestEvidence.id,
+        sourceChannel: latestEvidence.source_channel,
+        captureSource: latestEvidence.capture_source,
+        createdAt: latestEvidence.created_at,
+        summaryText: latestEvidence.summary_text,
+        payload: safeJsonParse(latestEvidence.payload_json),
+      }
+    : {
+        sourceChannel: channel,
+        captureSource: "fallback_current_prospect",
+        summaryText: "No extension capture is stored for this prospect yet. Use the current prospect fields as fallback context.",
+        payload: null,
+      };
+
+  const prompt = renderMessageRegenerationPrompt(template.user_prompt, workspace, docs, prospect, evidence);
+  const model = template.model || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:4377",
+      "X-Title": "Outreach App",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: template.temperature,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: template.system_prompt,
+        },
+        { role: "user", content: prompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const detailText = await response.text();
+    throw new Error(`OpenRouter request failed (${response.status}): ${detailText.slice(0, 600)}`);
+  }
+
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenRouter returned an empty response.");
+
+  const parsed = parseJson(content);
+  await recordPromptRun({
+    workspaceId: workspace.id,
+    promptTemplateId: template.id,
+    prospectId: prospect.id,
+    inputJson: { prompt, prospectId: prospect.id, evidenceId: latestEvidence?.id || null },
+    outputJson: parsed,
+    model,
+  });
+
+  return normalizeMessageRegeneration(parsed, prospect, workspace.product_name, workspace.default_language || "en");
+}
+
+function renderMessageRegenerationPrompt(
+  template: string,
+  workspace: Workspace,
+  docs: WorkspaceDoc[],
+  prospect: Prospect,
+  evidence: unknown,
+) {
+  return template
+    .replaceAll("{{productName}}", workspace.product_name)
+    .replaceAll("{{workspaceName}}", workspace.name)
+    .replaceAll("{{defaultLanguage}}", workspace.default_language || "en")
+    .replaceAll("{{workspaceDocs}}", formatWorkspaceDocs(docs))
+    .replaceAll("{{prospectJson}}", JSON.stringify({
+      id: prospect.id,
+      name: prospect.name,
+      position: prospect.position,
+      about: prospect.about,
+      profileUrl: prospect.profile_url,
+      sourceChannel: prospect.source_channel,
+      outreachMode: prospect.outreach_mode,
+      priorityTag: prospect.priority_tag,
+      wave: prospect.wave,
+      rationale: prospect.rationale,
+      recommendedTemplate: prospect.recommended_template,
+      briefTopic: prospect.brief_topic,
+      briefPreparation: prospect.preparation_notes,
+      sharedUrl: prospect.shared_url || "[shared link]",
+    }, null, 2))
+    .replaceAll("{{evidenceJson}}", JSON.stringify(evidence, null, 2))
+    .replaceAll("{{currentCopyJson}}", JSON.stringify({
+      connectionNote: prospect.connection_message,
+      afterAcceptanceWithNote: prospect.report_message,
+      existingNoNoteMessage: prospect.no_note_report_message,
+      postAcceptanceMessage: prospect.post_acceptance_message,
+      followup: prospect.followup_message,
+      twitterDm: prospect.twitter_dm_message,
+      twitterFollowup: prospect.twitter_followup_message,
+    }, null, 2));
+}
+
 function renderNoNoteRewritePrompt(template: string, workspace: Workspace, docs: WorkspaceDoc[], prospect: Prospect) {
   return template
     .replaceAll("{{productName}}", workspace.product_name)
@@ -1910,6 +2365,125 @@ function normalizeNoNoteRewrite(value: unknown, prospect: Prospect, productName 
   };
 }
 
+function normalizeMessageRegeneration(
+  value: unknown,
+  prospect: Prospect,
+  productName = "Tempolis",
+  defaultLanguage = "en",
+): MessageRegeneration {
+  const input = value as Partial<MessageRegeneration>;
+  if (prospect.source_channel === "twitter") {
+    const twitterDmFallbackText = twitterDmFallback(prospect, productName);
+    const twitterFollowupFallback = `Hi ${firstName(prospect.name)}, quick follow-up in case the brief slipped through. Any blunt read on whether the angle is useful would help.`;
+    return {
+      twitterDmMessage: sanitizeGeneratedMessage(String(input.twitterDmMessage || ""), twitterDmFallbackText, {
+        defaultLanguage,
+        briefTopic: prospect.brief_topic,
+        requireSharedLink: true,
+      }),
+      twitterFollowupMessage: sanitizeGeneratedMessage(String(input.twitterFollowupMessage || ""), twitterFollowupFallback, {
+        defaultLanguage,
+        briefTopic: prospect.brief_topic,
+      }),
+    };
+  }
+  const connectionFallback = linkedInConnectionFallback(prospect, productName);
+  const reportFallback = linkedInReportFallback(prospect, productName);
+  const fallbackNoNote = noNoteReportFallback(prospect.name, prospect.brief_topic, prospect.position, prospect.about, prospect.recommended_template, productName);
+  return {
+    connectionMessage: sanitizeGeneratedMessage(String(input.connectionMessage || ""), connectionFallback, {
+      defaultLanguage,
+      briefTopic: prospect.brief_topic,
+      maxLength: 300,
+    }).slice(0, 300),
+    reportMessage: sanitizeGeneratedMessage(String(input.reportMessage || ""), reportFallback, {
+      defaultLanguage,
+      briefTopic: prospect.brief_topic,
+      requireSharedLink: true,
+    }),
+    noNoteReportMessage: sanitizeNoNoteMessage(
+      sanitizeGeneratedMessage(String(input.noNoteReportMessage || ""), prospect.no_note_report_message || fallbackNoNote, {
+        defaultLanguage,
+        briefTopic: prospect.brief_topic,
+        requireSharedLink: true,
+      }),
+      prospect.no_note_report_message || fallbackNoNote,
+    ),
+    followupMessage: sanitizeGeneratedMessage(String(input.followupMessage || ""), `Hi ${firstName(prospect.name)}, following up in case the brief slipped through. No worries if this isn't the right timing.`, {
+      defaultLanguage,
+      briefTopic: prospect.brief_topic,
+    }),
+  };
+}
+
+function sanitizeGeneratedMessage(
+  value: string,
+  fallback: string,
+  options: {
+    defaultLanguage?: string;
+    briefTopic?: string | null;
+    requireSharedLink?: boolean;
+    maxLength?: number;
+  } = {},
+) {
+  const cleanValue = value.trim();
+  if (!cleanValue) return fallback;
+  if ((options.defaultLanguage || "en").toLowerCase().startsWith("en") && isFrenchLikeMessage(cleanValue)) return fallback;
+  if (/\b(used the signals|signals on your profile|profile evidence|scraped|visible activity)\b/i.test(cleanValue)) return fallback;
+  if (/\bbref\b/i.test(cleanValue)) return fallback;
+  if (options.requireSharedLink && !/\[shared link\]/i.test(cleanValue)) return fallback;
+  if (!options.briefTopic && /\b(on|sur)\s+[\"'“‘][^"'”’]+[\"'”’]/i.test(cleanValue)) return fallback;
+  if (!options.briefTopic && /\b(picked|starting with|prepared (?:a|one|this)? ?(?:short )?(?:brief|test brief) on)\b/i.test(cleanValue)) return fallback;
+  if (options.maxLength && cleanValue.length > options.maxLength) return fallback;
+  return cleanValue;
+}
+
+function linkedInConnectionFallback(prospect: Prospect, productName: string) {
+  const first = firstName(prospect.name);
+  if (isNarralensProduct(productName)) {
+    const context = narralensProspectContext(prospect.position, prospect.about, prospect.recommended_template);
+    return `Hi ${first}, I'm building ${productName} for brand, social, and PR teams and testing whether short narrative briefs are useful in ${context}. Thought this might be worth sharing.`;
+  }
+  const context = prospectContext(prospect.position, prospect.about, prospect.recommended_template);
+  return `Hi ${first}, I'm building ${productName} and testing whether short issue briefs are useful for people working in ${context}. Thought this might be relevant.`;
+}
+
+function linkedInReportFallback(prospect: Prospect, productName: string) {
+  const first = firstName(prospect.name);
+  if (isNarralensProduct(productName)) {
+    const context = narralensProspectContext(prospect.position, prospect.about, prospect.recommended_template);
+    return `Hi ${first},
+
+Thanks for connecting. I'm building ${productName} for brand, social, and PR teams, and I wanted to test whether this kind of short narrative brief could be useful for ${context}${prospect.brief_topic ? `, using ${prospect.brief_topic} as the starting point` : ""}.
+
+[shared link]
+
+If the format feels useful for campaign monitoring, client updates, or positioning work, I'd really value your blunt feedback.`;
+  }
+  const context = prospectContext(prospect.position, prospect.about, prospect.recommended_template);
+  return `Hi ${first},
+
+Thanks for connecting. I'm building ${productName} and testing whether short issue briefs can be useful for ${context}${prospect.brief_topic ? `, using ${prospect.brief_topic} as the first angle` : ""}.
+
+[shared link]
+
+If the format feels useful, or if the angle is off, I'd value your feedback.`;
+}
+
+function isFrenchLikeMessage(value: string) {
+  return /\b(salut|bonjour|merci|acceptation|bref|bref sur|ton avis|je teste|j'ai prépar|ça|résonne|missions|petit suivi)\b/i.test(value);
+}
+
+function twitterDmFallback(prospect: Prospect, productName: string) {
+  return `Hi ${firstName(prospect.name)}, I'm building ${productName} and testing short briefs around public conversations.
+
+I prepared a short test brief${prospect.brief_topic ? ` on ${prospect.brief_topic}` : ""}.
+
+[shared link]
+
+Would value a blunt read on whether the angle is useful.`;
+}
+
 function sanitizeNoNoteMessage(value: string, fallback: string) {
   const cleanValue = value.trim();
   if (!cleanValue) return fallback;
@@ -1930,6 +2504,14 @@ function parseJson(content: string) {
   const trimmed = content.trim();
   const json = trimmed.startsWith("```") ? trimmed.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim() : trimmed;
   return JSON.parse(json);
+}
+
+function safeJsonParse(value: string) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 function loadLocalEnv() {
@@ -2018,6 +2600,12 @@ TASK
 - Generate two post-acceptance variants:
   - reportMessage assumes a custom connection note was sent and may refer to the promised brief.
   - noNoteReportMessage assumes no custom connection note was sent; it must open naturally with "Thanks for connecting" or equivalent.
+- For both reportMessage and noNoteReportMessage, make the message feel motivated by the actual profile data without sounding like surveillance.
+- Include light builder context when useful so the recipient understands why a stranger is sharing a brief.
+- Use the profile evidence to choose the angle, tone, and reason for relevance; do not copy a fixed message architecture.
+- If the evidence is a repost, like, or activity item, phrase it as an interest or public signal, not as proof that the prospect owns that subject professionally.
+- Avoid creepy/internal wording such as "I used the signals on your profile", "profile evidence", "scraped", or "visible activity".
+- Avoid mass-outreach patterns: vary opener, sentence rhythm, message length, transition into the brief, and feedback ask across every prospect in the batch.
 - Generate the J+2 follow-up.
 - Do not invent facts beyond the profile fields.
 
@@ -2153,6 +2741,10 @@ NARRALENS-SPECIFIC RULES
 - If the profile only shows broad brand/social/PR experience, pick a famous concrete test case relevant to that workflow rather than a generic concept.
 - Brief preparation should explain why this concrete case is useful for their workflow: campaign readout, launch reaction, competitor narrative check, client update, crisis/backlash scan, or positioning decision.
 - Outreach copy must not say "your work on [topic]" unless the profile explicitly says they work on that exact topic. Safer wording: "as a concrete test case for campaign/competitor readouts" or "given your brand/social/PR work".
+- LinkedIn first messages must not be generic. The reader should understand why this brief was chosen for them, but the wording should feel natural and human rather than analytical.
+- Mention the builder/testing context when it makes the approach feel less abrupt.
+- Do not use one reusable sentence pattern. Let the profile data decide the opener, bridge, and feedback ask for each prospect.
+- Avoid creepy/internal wording such as "signals on your profile", "profile evidence", or "I used your profile".
 - The product promise is business/workflow value, not concept analysis: faster campaign reads, launch monitoring, competitor checks, client updates, and internal decision briefs.
 `;
 

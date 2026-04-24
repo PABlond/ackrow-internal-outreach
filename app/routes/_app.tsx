@@ -14,7 +14,11 @@ export async function loader({ request }: Route.LoaderArgs) {
 export default function AppLayout() {
   const shellData = useLoaderData<typeof loader>();
   return (
-    <AppShell workspaces={shellData.workspaces} activeWorkspace={shellData.activeWorkspace}>
+    <AppShell
+      workspaces={shellData.workspaces}
+      activeWorkspace={shellData.activeWorkspace}
+      todoSummaries={shellData.todoSummaries}
+    >
       <Outlet />
       <Toaster richColors closeButton position="bottom-right" />
     </AppShell>

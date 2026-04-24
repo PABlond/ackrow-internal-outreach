@@ -1,15 +1,16 @@
 import { jsx, jsxs, Fragment } from "react/jsx-runtime";
 import { PassThrough } from "node:stream";
 import { createReadableStreamFromReadable } from "@react-router/node";
-import { ServerRouter, UNSAFE_withComponentProps, Outlet, UNSAFE_withErrorBoundaryProps, useRouteError, isRouteErrorResponse, Meta, Links, ScrollRestoration, Scripts, redirect, useLocation, useNavigate, NavLink, useLoaderData, Link as Link$1, Form, useSearchParams, useActionData, useNavigation, useParams, data } from "react-router";
+import { ServerRouter, UNSAFE_withComponentProps, Outlet, UNSAFE_withErrorBoundaryProps, useRouteError, isRouteErrorResponse, Meta, Links, ScrollRestoration, Scripts, redirect, useLocation, useNavigate, useFetcher, NavLink, useLoaderData, Link as Link$1, Form, useSearchParams, useActionData, useNavigation, useParams, data } from "react-router";
 import { isbot } from "isbot";
 import { renderToPipeableStream } from "react-dom/server";
 import * as React from "react";
-import { useContext, createContext, forwardRef, createElement, useState, useEffect, useCallback } from "react";
+import { useContext, createContext, forwardRef, createElement, useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { Slot } from "@radix-ui/react-slot";
 import { cva } from "class-variance-authority";
+import * as PopoverPrimitive from "@radix-ui/react-popover";
 import * as SheetPrimitive from "@radix-ui/react-dialog";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Toaster as Toaster$1, toast } from "sonner";
@@ -190,7 +191,7 @@ const route0 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   Layout,
   default: root
 }, Symbol.toStringTag, { value: "Module" }));
-function loader$e() {
+function loader$f() {
   return redirect("/tempolis");
 }
 function action$7() {
@@ -199,7 +200,7 @@ function action$7() {
 const route1 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   action: action$7,
-  loader: loader$e
+  loader: loader$f
 }, Symbol.toStringTag, { value: "Module" }));
 const mergeClasses = (...classes) => classes.filter((className, index, array) => {
   return Boolean(className) && className.trim() !== "" && array.indexOf(className) === index;
@@ -519,6 +520,37 @@ const __iconNode = [
   ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
 ];
 const X = createLucideIcon("x", __iconNode);
+const badgeVariants = cva(
+  "inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1 [&>svg]:pointer-events-none transition-[color,box-shadow] overflow-hidden",
+  {
+    variants: {
+      variant: {
+        default: "border-transparent bg-primary text-primary-foreground",
+        secondary: "border-transparent bg-secondary text-secondary-foreground",
+        destructive: "border-transparent bg-destructive text-destructive-foreground",
+        outline: "text-foreground",
+        success: "border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+        warning: "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-400",
+        info: "border-transparent bg-sky-500/15 text-sky-700 dark:text-sky-400",
+        muted: "border-transparent bg-muted text-muted-foreground"
+      }
+    },
+    defaultVariants: {
+      variant: "default"
+    }
+  }
+);
+function Badge({ className, variant, asChild = false, ...props }) {
+  const Comp = asChild ? Slot : "span";
+  return /* @__PURE__ */ jsx(
+    Comp,
+    {
+      "data-slot": "badge",
+      className: cn(badgeVariants({ variant }), className),
+      ...props
+    }
+  );
+}
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[color,box-shadow] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:border-ring",
   {
@@ -559,6 +591,54 @@ const Button = React.forwardRef(
   }
 );
 Button.displayName = "Button";
+function Input({ className, type, ...props }) {
+  return /* @__PURE__ */ jsx(
+    "input",
+    {
+      type,
+      "data-slot": "input",
+      className: cn(
+        "flex h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none md:text-sm",
+        "file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground",
+        "placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground",
+        "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50",
+        "aria-invalid:border-destructive aria-invalid:ring-destructive/30",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        className
+      ),
+      ...props
+    }
+  );
+}
+function Popover(props) {
+  return /* @__PURE__ */ jsx(PopoverPrimitive.Root, { "data-slot": "popover", ...props });
+}
+function PopoverAnchor(props) {
+  return /* @__PURE__ */ jsx(PopoverPrimitive.Anchor, { "data-slot": "popover-anchor", ...props });
+}
+function PopoverContent({
+  className,
+  align = "center",
+  sideOffset = 4,
+  ...props
+}) {
+  return /* @__PURE__ */ jsx(PopoverPrimitive.Portal, { children: /* @__PURE__ */ jsx(
+    PopoverPrimitive.Content,
+    {
+      "data-slot": "popover-content",
+      align,
+      sideOffset,
+      className: cn(
+        "z-50 w-72 origin-[var(--radix-popover-content-transform-origin)] rounded-md border bg-popover p-0 text-popover-foreground shadow-md outline-hidden",
+        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+        "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+        "data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+        className
+      ),
+      ...props
+    }
+  ) });
+}
 function Sheet(props) {
   return /* @__PURE__ */ jsx(SheetPrimitive.Root, { "data-slot": "sheet", ...props });
 }
@@ -756,12 +836,70 @@ function NavLinkItem({ item, basePath, onNavigate }) {
 function SidebarContent({
   workspaces,
   activeWorkspace,
+  todoSummaries,
   onNavigate
 }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const searchFetcher = useFetcher();
+  const [query, setQuery] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const [results, setResults] = useState([]);
+  const [openSearch, setOpenSearch] = useState(false);
+  const searchContainerRef = useRef(null);
   const activeInitial = (activeWorkspace.product_name || activeWorkspace.name || "?").slice(0, 1).toUpperCase();
   const basePath = `/${activeWorkspace.slug}`;
+  const todoSummaryBySlug = new Map(todoSummaries.map((summary) => [summary.workspace_slug, summary]));
+  const trimmedQuery = query.trim();
+  const showSearchResults = openSearch && trimmedQuery.length >= 2;
+  useEffect(() => {
+    if (trimmedQuery.length < 2) {
+      setOpenSearch(false);
+      setResults([]);
+      return;
+    }
+    setOpenSearch(true);
+    const timeout = window.setTimeout(() => {
+      searchFetcher.load(`/api/prospect-search?q=${encodeURIComponent(trimmedQuery)}`);
+    }, 150);
+    return () => window.clearTimeout(timeout);
+  }, [trimmedQuery, searchFetcher]);
+  useEffect(() => {
+    if (searchFetcher.data?.prospects) {
+      setResults(searchFetcher.data.prospects);
+    }
+  }, [searchFetcher.data]);
+  const emptySearch = showSearchResults && searchFetcher.state === "idle" && results.length === 0;
+  const loadingSearch = showSearchResults && searchFetcher.state !== "idle";
+  const activeResultId = useMemo(() => {
+    const parts = location.pathname.split("/").filter(Boolean);
+    return parts[1] === "prospects" ? Number(parts[2] || "") : null;
+  }, [location.pathname]);
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [trimmedQuery]);
+  useEffect(() => {
+    if (results.length === 0) return;
+    setHighlightedIndex((current) => Math.min(current, results.length - 1));
+  }, [results]);
+  useEffect(() => {
+    if (!showSearchResults) return;
+    function handlePointer(event) {
+      if (!searchContainerRef.current?.contains(event.target)) {
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", handlePointer);
+    return () => document.removeEventListener("mousedown", handlePointer);
+  }, [showSearchResults]);
+  function openProspect(prospect) {
+    setQuery("");
+    setResults([]);
+    setOpenSearch(false);
+    setHighlightedIndex(0);
+    navigate(`/${prospect.workspace_slug}/prospects/${prospect.id}`);
+    onNavigate?.();
+  }
   return /* @__PURE__ */ jsxs("div", { className: "flex h-full flex-col gap-2 p-3", children: [
     /* @__PURE__ */ jsxs("div", { className: "flex h-10 items-center gap-2 px-2", children: [
       /* @__PURE__ */ jsx("div", { className: "flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground text-sm font-semibold", children: activeInitial }),
@@ -773,6 +911,103 @@ function SidebarContent({
         /* @__PURE__ */ jsx("p", { className: "truncate text-[11px] text-sidebar-foreground/55", children: "Internal CRM" })
       ] })
     ] }),
+    /* @__PURE__ */ jsx("div", { ref: searchContainerRef, className: "px-2", children: /* @__PURE__ */ jsxs(Popover, { open: showSearchResults, onOpenChange: (nextOpen) => {
+      if (!nextOpen) {
+        setOpenSearch(false);
+        setQuery("");
+        setResults([]);
+      }
+    }, children: [
+      /* @__PURE__ */ jsx(PopoverAnchor, { asChild: true, children: /* @__PURE__ */ jsxs("div", { className: "relative", children: [
+        /* @__PURE__ */ jsx(Search, { className: "pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-sidebar-foreground/45" }),
+        /* @__PURE__ */ jsx(
+          Input,
+          {
+            value: query,
+            onChange: (event) => setQuery(event.currentTarget.value),
+            onFocus: () => {
+              if (trimmedQuery.length >= 2) setOpenSearch(true);
+            },
+            onKeyDown: (event) => {
+              if (!showSearchResults || results.length === 0) {
+                if (event.key === "Escape") {
+                  setQuery("");
+                  setOpenSearch(false);
+                }
+                return;
+              }
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setHighlightedIndex((current) => (current + 1) % results.length);
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setHighlightedIndex((current) => (current - 1 + results.length) % results.length);
+              } else if (event.key === "Enter") {
+                event.preventDefault();
+                openProspect(results[highlightedIndex] || results[0]);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                setQuery("");
+                setOpenSearch(false);
+                setResults([]);
+              }
+            },
+            placeholder: "Find a prospect...",
+            "aria-label": "Find a prospect across all workspaces",
+            "aria-expanded": showSearchResults,
+            "aria-controls": "sidebar-prospect-search-results",
+            className: "h-9 border-sidebar-border bg-background pl-9 text-sm"
+          }
+        )
+      ] }) }),
+      /* @__PURE__ */ jsx(
+        PopoverContent,
+        {
+          id: "sidebar-prospect-search-results",
+          align: "start",
+          side: "bottom",
+          sideOffset: 8,
+          className: "w-[var(--radix-popover-trigger-width)] overflow-hidden border-sidebar-border p-0",
+          children: /* @__PURE__ */ jsxs("div", { className: "max-h-80 overflow-y-auto p-1", children: [
+            results.map((prospect, index) => {
+              const isActiveResult = prospect.id === activeResultId && prospect.workspace_slug === activeWorkspace.slug;
+              const isHighlighted = index === highlightedIndex;
+              return /* @__PURE__ */ jsxs(
+                "button",
+                {
+                  type: "button",
+                  role: "option",
+                  "aria-selected": isHighlighted,
+                  onMouseEnter: () => setHighlightedIndex(index),
+                  onClick: () => openProspect(prospect),
+                  className: cn(
+                    "flex w-full items-start justify-between gap-3 rounded-md px-2.5 py-2 text-left transition-colors",
+                    isHighlighted ? "bg-sidebar-accent text-sidebar-accent-foreground" : isActiveResult ? "bg-sidebar-accent/70 text-sidebar-accent-foreground" : "hover:bg-accent hover:text-accent-foreground"
+                  ),
+                  children: [
+                    /* @__PURE__ */ jsxs("div", { className: "min-w-0", children: [
+                      /* @__PURE__ */ jsx("div", { className: "truncate text-sm font-medium", children: prospect.name }),
+                      /* @__PURE__ */ jsxs("div", { className: "truncate text-[11px] text-muted-foreground", children: [
+                        prospect.position || "No title",
+                        " · ",
+                        labelForStatus(prospect.status)
+                      ] })
+                    ] }),
+                    /* @__PURE__ */ jsx(Badge, { variant: workspaceBadgeVariant(prospect.workspace_slug, activeWorkspace.slug), className: "shrink-0 rounded-full text-[10px] uppercase tracking-wide", children: prospect.workspace_name })
+                  ]
+                },
+                `${prospect.workspace_slug}-${prospect.id}`
+              );
+            }),
+            emptySearch ? /* @__PURE__ */ jsx("div", { className: "px-2.5 py-2 text-xs text-muted-foreground", children: "No prospect found." }) : null,
+            /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between border-t px-2.5 py-2 text-[10px] text-muted-foreground", children: [
+              /* @__PURE__ */ jsx("span", { children: loadingSearch ? "Searching..." : "Across all workspaces" }),
+              /* @__PURE__ */ jsx("span", { children: "↑ ↓ move · Enter open · Esc close" })
+            ] })
+          ] })
+        }
+      )
+    ] }) }),
     /* @__PURE__ */ jsxs("div", { className: "px-2 py-2", children: [
       /* @__PURE__ */ jsx("label", { htmlFor: "workspace-switcher", className: "sr-only", children: "Workspace" }),
       /* @__PURE__ */ jsx(
@@ -787,7 +1022,42 @@ function SidebarContent({
           className: "h-9 w-full rounded-md border border-sidebar-border bg-background px-2 text-sm text-foreground outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/40",
           children: workspaces.map((workspace) => /* @__PURE__ */ jsx("option", { value: workspace.slug, children: workspace.name }, workspace.slug))
         }
-      )
+      ),
+      /* @__PURE__ */ jsx("div", { className: "mt-2 grid gap-1", children: workspaces.map((workspace) => {
+        const summary = todoSummaryBySlug.get(workspace.slug);
+        const todoCount = summary?.todo_count ?? 0;
+        const overdueCount = summary?.overdue_count ?? 0;
+        const isActive = workspace.slug === activeWorkspace.slug;
+        return /* @__PURE__ */ jsxs(
+          "button",
+          {
+            type: "button",
+            onClick: () => {
+              navigate(`/${workspace.slug}#todos`);
+              onNavigate?.();
+            },
+            className: cn(
+              "flex h-8 items-center justify-between gap-2 rounded-md px-2 text-left text-xs transition-colors",
+              isActive ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            ),
+            children: [
+              /* @__PURE__ */ jsx("span", { className: "truncate", children: workspace.name }),
+              /* @__PURE__ */ jsx(
+                "span",
+                {
+                  title: overdueCount > 0 ? `${overdueCount} overdue` : `${todoCount} todo`,
+                  className: cn(
+                    "inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums",
+                    overdueCount > 0 ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : todoCount > 0 ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                  ),
+                  children: todoCount
+                }
+              )
+            ]
+          },
+          workspace.slug
+        );
+      }) })
     ] }),
     /* @__PURE__ */ jsx("nav", { className: "mt-2 flex flex-1 flex-col gap-0.5", children: items.map((item) => /* @__PURE__ */ jsx(NavLinkItem, { item, basePath, onNavigate }, item.to || "dashboard")) }),
     /* @__PURE__ */ jsx("div", { className: "mt-auto border-t pt-2", children: /* @__PURE__ */ jsx(ThemeToggle, {}) })
@@ -800,15 +1070,35 @@ function workspaceSwitchPath(slug, pathname, search2, workspaces) {
   const safeRest = rest[0] === "prospects" && rest.length > 1 ? ["prospects"] : rest;
   return `/${[slug, ...safeRest].join("/")}${search2}`;
 }
+function labelForStatus(status) {
+  if (status === "connection_sent") return "Pending";
+  if (status === "accepted") return "Accepted";
+  if (status === "report_sent") return "Report sent";
+  if (status === "conversation_active") return "Talking";
+  if (status === "reply_sent") return "Reply sent";
+  if (status === "followup_sent") return "Follow-up sent";
+  if (status === "saved_for_later") return "Saved";
+  if (status === "archived_declined") return "Archived";
+  if (status === "archived") return "Archived";
+  if (status === "skipped") return "Skipped";
+  return "Todo";
+}
+function workspaceBadgeVariant(workspaceSlug, activeWorkspaceSlug) {
+  if (workspaceSlug === activeWorkspaceSlug) return "info";
+  if (workspaceSlug === "narralens") return "secondary";
+  if (workspaceSlug === "tempolis") return "outline";
+  return "muted";
+}
 function AppShell({
   children,
   workspaces,
-  activeWorkspace
+  activeWorkspace,
+  todoSummaries
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const activeInitial = (activeWorkspace.product_name || activeWorkspace.name || "?").slice(0, 1).toUpperCase();
   return /* @__PURE__ */ jsxs("div", { className: "flex min-h-screen w-full bg-background text-foreground", children: [
-    /* @__PURE__ */ jsx("aside", { className: "hidden w-60 shrink-0 border-r bg-sidebar text-sidebar-foreground lg:block", children: /* @__PURE__ */ jsx("div", { className: "sticky top-0 h-screen", children: /* @__PURE__ */ jsx(SidebarContent, { workspaces, activeWorkspace }) }) }),
+    /* @__PURE__ */ jsx("aside", { className: "hidden w-60 shrink-0 border-r bg-sidebar text-sidebar-foreground lg:block", children: /* @__PURE__ */ jsx("div", { className: "sticky top-0 h-screen", children: /* @__PURE__ */ jsx(SidebarContent, { workspaces, activeWorkspace, todoSummaries }) }) }),
     /* @__PURE__ */ jsxs("div", { className: "flex min-w-0 flex-1 flex-col", children: [
       /* @__PURE__ */ jsxs("header", { className: "sticky top-0 z-30 flex h-12 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur lg:hidden", children: [
         /* @__PURE__ */ jsxs(Sheet, { open: mobileOpen, onOpenChange: setMobileOpen, children: [
@@ -818,6 +1108,7 @@ function AppShell({
             {
               workspaces,
               activeWorkspace,
+              todoSummaries,
               onNavigate: () => setMobileOpen(false)
             }
           ) })
@@ -876,8 +1167,118 @@ async function requireWorkspace(slug) {
   return workspace;
 }
 async function getWorkspaceShellData(slug) {
-  const [workspaces, activeWorkspace] = await Promise.all([getWorkspaces(), requireWorkspace(slug)]);
-  return { workspaces, activeWorkspace };
+  const [workspaces, activeWorkspace, todoSummaries] = await Promise.all([
+    getWorkspaces(),
+    requireWorkspace(slug),
+    getWorkspaceTodoSummaries()
+  ]);
+  return { workspaces, activeWorkspace, todoSummaries };
+}
+async function searchProspectsGlobally(query, limit = 8) {
+  const normalized = String(query || "").trim();
+  if (normalized.length < 2) return [];
+  const like = `%${escapeLike(normalized)}%`;
+  const prefix = `${escapeLike(normalized)}%`;
+  return await all(`
+    SELECT
+      p.id,
+      p.name,
+      p.position,
+      w.slug AS workspace_slug,
+      w.name AS workspace_name,
+      p.status,
+      p.source_channel
+    FROM prospects p
+    JOIN workspaces w ON w.id = p.workspace_id
+    WHERE
+      p.name LIKE ? ESCAPE '\\'
+      OR COALESCE(p.position, '') LIKE ? ESCAPE '\\'
+      OR COALESCE(p.profile_url, '') LIKE ? ESCAPE '\\'
+      OR COALESCE(p.twitter_handle, '') LIKE ? ESCAPE '\\'
+    ORDER BY
+      CASE
+        WHEN lower(p.name) = lower(?) THEN 0
+        WHEN lower(p.name) LIKE lower(?) ESCAPE '\\' THEN 1
+        WHEN lower(COALESCE(p.position, '')) LIKE lower(?) ESCAPE '\\' THEN 2
+        ELSE 3
+      END,
+      CASE
+        WHEN p.status IN ('conversation_active', 'reply_sent', 'accepted', 'report_sent', 'connection_sent') THEN 0
+        WHEN p.status = 'to_contact' THEN 1
+        ELSE 2
+      END,
+      p.updated_at DESC,
+      p.created_at DESC
+    LIMIT ?
+  `, [like, like, like, like, normalized, prefix, prefix, limit]);
+}
+async function getWorkspaceTodoSummaries() {
+  const today = todayIso();
+  const rows = await all(`
+    SELECT
+      w.id AS workspace_id,
+      w.slug AS workspace_slug,
+      w.name AS workspace_name,
+      (
+        SELECT COUNT(*)
+        FROM prospects p
+        WHERE p.workspace_id = w.id
+          AND p.status = 'accepted'
+          AND p.report_sent_date IS NULL
+      ) + (
+        SELECT COUNT(*)
+        FROM tasks t
+        JOIN prospects p ON p.id = t.prospect_id
+        WHERE p.workspace_id = w.id
+          AND t.status = 'open'
+          AND t.type IN ('send_followup', 'send_twitter_followup')
+          AND t.due_date IS NOT NULL
+          AND t.due_date <= ?
+      ) + (
+        SELECT COUNT(*)
+        FROM tasks t
+        JOIN prospects p ON p.id = t.prospect_id
+        WHERE p.workspace_id = w.id
+          AND t.status = 'open'
+          AND t.type IN ('send_connection', 'send_twitter_dm')
+      ) + (
+        SELECT COUNT(*)
+        FROM briefs b
+        JOIN prospects p ON p.id = b.prospect_id
+        WHERE p.workspace_id = w.id
+          AND p.status <> 'connection_sent'
+          AND p.status IN ('accepted')
+          AND b.topic IS NOT NULL
+          AND trim(b.topic) <> ''
+          AND (b.shared_url IS NULL OR trim(b.shared_url) = '')
+      ) + (
+        SELECT COUNT(*)
+        FROM prospects p
+        WHERE p.workspace_id = w.id
+          AND p.status = 'connection_sent'
+          AND (
+            p.pending_checked_at IS NULL
+            OR p.pending_checked_at <= datetime('now', '-4 hours')
+          )
+      ) AS todo_count,
+      (
+        SELECT COUNT(*)
+        FROM tasks t
+        JOIN prospects p ON p.id = t.prospect_id
+        WHERE p.workspace_id = w.id
+          AND t.status = 'open'
+          AND t.type IN ('send_followup', 'send_twitter_followup')
+          AND t.due_date IS NOT NULL
+          AND t.due_date < ?
+      ) AS overdue_count
+    FROM workspaces w
+    ORDER BY w.name
+  `, [today, today]);
+  return rows.map((row) => ({
+    ...row,
+    todo_count: Number(row.todo_count || 0),
+    overdue_count: Number(row.overdue_count || 0)
+  }));
 }
 async function getWorkspaceDocs(workspaceId) {
   return await all("SELECT * FROM workspace_docs WHERE workspace_id = ? ORDER BY type", [workspaceId]);
@@ -891,6 +1292,53 @@ async function getActivePromptTemplate(workspaceId, channel, purpose) {
   `, [workspaceId, channel, purpose]);
   if (!template) throw new Error(`Missing active prompt template for ${channel}/${purpose}.`);
   return template;
+}
+async function saveProspectEvidence(input) {
+  const summaryText = summarizeEvidencePayload(input.payload, input.sourceChannel);
+  await run(`
+    INSERT INTO prospect_evidence (
+      prospect_id, workspace_id, source_channel, capture_source, payload_json, summary_text
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+  `, [
+    input.prospectId,
+    input.workspaceId,
+    input.sourceChannel,
+    input.captureSource,
+    JSON.stringify(input.payload),
+    summaryText
+  ]);
+}
+async function getLatestProspectEvidence(prospectId, workspaceId) {
+  return await one(`
+    SELECT *
+    FROM prospect_evidence
+    WHERE prospect_id = ?
+      ${workspaceId ? "AND workspace_id = ?" : ""}
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `, workspaceId ? [prospectId, workspaceId] : [prospectId]);
+}
+function summarizeEvidencePayload(payload, sourceChannel) {
+  const input = payload || {};
+  const parts = [
+    `Channel: ${sourceChannel}`,
+    textPart("Name", input.name),
+    textPart(sourceChannel === "twitter" ? "Handle" : "Position", sourceChannel === "twitter" ? input.twitterHandle || input.position : input.position),
+    textPart(sourceChannel === "twitter" ? "Bio" : "About", input.about),
+    textPart("Brief direction", input.briefDirection),
+    sourceChannel === "linkedin" ? textPart("Experience", input.experience, 2500) : "",
+    sourceChannel === "linkedin" ? textPart("Education", input.education, 1200) : "",
+    textPart(sourceChannel === "twitter" ? "Visible posts" : "Activity", input.activity, 3500),
+    textPart("Additional signals", input.signals, 1500),
+    textPart("Raw visible text", input.rawText, 3e3)
+  ].filter(Boolean);
+  return parts.join("\n\n").slice(0, 14e3);
+}
+function textPart(label, value, max = 1800) {
+  const text = String(value || "").trim();
+  return text ? `${label}:
+${text.slice(0, max)}` : "";
 }
 async function recordPromptRun(input) {
   await run(`
@@ -1075,7 +1523,8 @@ async function getProspectDetail(id, workspaceId) {
     WHERE prospect_id = ?
     ORDER BY created_at DESC, id DESC
   `, [id]);
-  return { prospect: withDerivedMessages(prospect), tasks, events, replies, today: todayIso() };
+  const latestEvidence = await getLatestProspectEvidence(id, workspaceId);
+  return { prospect: withDerivedMessages(prospect), tasks, events, replies, latestEvidence, today: todayIso() };
 }
 async function getDashboard(workspaceInput) {
   const workspace = typeof workspaceInput === "object" ? workspaceInput : workspaceInput ? await one("SELECT * FROM workspaces WHERE id = ?", [workspaceInput]) : await getActiveWorkspace();
@@ -1594,6 +2043,29 @@ async function runProspectAction(formData, workspaceId) {
     }
     return;
   }
+  if (intent === "regenerateFromLatestCapture") {
+    const generated = await generateMessagesFromLatestEvidence(id);
+    if (generated.connectionMessage) {
+      await upsertGeneratedMessage(id, "connection", generated.connectionMessage.slice(0, 300), null);
+    }
+    if (generated.reportMessage) {
+      await upsertGeneratedMessage(id, "report", generated.reportMessage, null);
+    }
+    if (generated.noNoteReportMessage) {
+      await upsertGeneratedMessage(id, "report_no_note", generated.noNoteReportMessage, null);
+    }
+    if (generated.followupMessage) {
+      await upsertGeneratedMessage(id, "followup", generated.followupMessage, null);
+    }
+    if (generated.twitterDmMessage) {
+      await upsertGeneratedMessage(id, "twitter_dm", generated.twitterDmMessage, null);
+    }
+    if (generated.twitterFollowupMessage) {
+      await upsertGeneratedMessage(id, "twitter_followup", generated.twitterFollowupMessage, null);
+    }
+    await addEvent(id, "messages_regenerated_from_evidence", "Messages regenerated from latest captured evidence.", today);
+    return;
+  }
   try {
     if (intent === "deleteProspect") {
       await completeAllOpenTasks(id);
@@ -1939,6 +2411,7 @@ async function importAnalyzedProspects(items2, workspaceId) {
       ]);
       const prospect = await one("SELECT id, status FROM prospects WHERE profile_url = ? AND workspace_id = ?", [item.profileUrl, workspace.id]);
       if (!prospect) continue;
+      const shouldKeepDrafts = item.contactNow && prospect.status === "to_contact";
       if (item.briefTopic) {
         await run(`
           INSERT INTO briefs (prospect_id, topic, preparation_notes)
@@ -1949,25 +2422,34 @@ async function importAnalyzedProspects(items2, workspaceId) {
             updated_at = CURRENT_TIMESTAMP
         `, [prospect.id, item.briefTopic, item.briefPreparation]);
       }
-      if (item.connectionMessage) {
-        await upsertGeneratedMessage(prospect.id, "connection", item.connectionMessage, null);
+      if (shouldKeepDrafts) {
+        if (item.connectionMessage) {
+          await upsertGeneratedMessage(prospect.id, "connection", item.connectionMessage, null);
+        }
+        if (item.reportMessage) {
+          await upsertGeneratedMessage(prospect.id, "report", item.reportMessage, null);
+        }
+        if (item.noNoteReportMessage) {
+          await upsertGeneratedMessage(prospect.id, "report_no_note", item.noNoteReportMessage, null);
+        }
+        if (item.followupMessage) {
+          await upsertGeneratedMessage(prospect.id, "followup", item.followupMessage, null);
+        }
+        if (item.twitterDmMessage) {
+          await upsertGeneratedMessage(prospect.id, "twitter_dm", item.twitterDmMessage, null);
+        }
+        if (item.twitterFollowupMessage) {
+          await upsertGeneratedMessage(prospect.id, "twitter_followup", item.twitterFollowupMessage, null);
+        }
+      } else if (prospect.status === "to_contact" || prospect.status === "saved_for_later" || prospect.status === "skipped") {
+        await clearUnsentGeneratedMessages(prospect.id);
+        if (sourceChannel === "twitter") {
+          await completeOpenTask(prospect.id, "send_twitter_dm");
+        } else {
+          await completeOpenTask(prospect.id, "send_connection");
+        }
       }
-      if (item.reportMessage) {
-        await upsertGeneratedMessage(prospect.id, "report", item.reportMessage, null);
-      }
-      if (item.noNoteReportMessage) {
-        await upsertGeneratedMessage(prospect.id, "report_no_note", item.noNoteReportMessage, null);
-      }
-      if (item.followupMessage) {
-        await upsertGeneratedMessage(prospect.id, "followup", item.followupMessage, null);
-      }
-      if (item.twitterDmMessage) {
-        await upsertGeneratedMessage(prospect.id, "twitter_dm", item.twitterDmMessage, null);
-      }
-      if (item.twitterFollowupMessage) {
-        await upsertGeneratedMessage(prospect.id, "twitter_followup", item.twitterFollowupMessage, null);
-      }
-      if (item.contactNow && status === "to_contact") {
+      if (shouldKeepDrafts) {
         if (sourceChannel === "twitter") {
           await createOpenTask(prospect.id, "send_twitter_dm", `Send Twitter/X DM to ${item.name}`, today);
         } else {
@@ -2002,7 +2484,22 @@ async function getDb() {
     const config = getDatabaseConfig();
     databaseUsesEmbeddedReplica = Boolean(config.syncUrl);
     database = createClient(config);
-    databaseReady = prepareDatabase(database);
+    databaseReady = prepareDatabase(database).catch(async (error) => {
+      if (databaseUsesEmbeddedReplica && isWalConflict(error)) {
+        console.warn("Embedded replica WAL conflict detected. Resetting local replica and syncing from Turso.");
+        database?.close();
+        resetEmbeddedReplicaFiles();
+        const retryConfig = getDatabaseConfig();
+        databaseUsesEmbeddedReplica = Boolean(retryConfig.syncUrl);
+        database = createClient(retryConfig);
+        await prepareDatabase(database);
+        return;
+      }
+      database?.close();
+      database = void 0;
+      databaseReady = void 0;
+      throw error;
+    });
   }
   await databaseReady;
   return database;
@@ -2017,7 +2514,7 @@ function getDatabaseConfig() {
       authToken: process.env.DATABASE_AUTH_TOKEN
     };
   }
-  const replicaPath = process.env.DATABASE_REPLICA_PATH || path.join(dataDir, "outreach-replica.sqlite");
+  const replicaPath = getEmbeddedReplicaPath();
   fs.mkdirSync(path.dirname(replicaPath), { recursive: true });
   return {
     url: `file:${replicaPath}`,
@@ -2032,24 +2529,47 @@ function isRemoteLibsqlUrl(url) {
 }
 async function prepareDatabase(db) {
   if (databaseUsesEmbeddedReplica) {
-    await syncDatabase();
+    await syncDatabase("startup", true);
   }
   await applyMigrations(db);
   await seedWorkspaceDefaults(db);
   if (databaseUsesEmbeddedReplica) {
-    await syncDatabase();
+    await syncDatabase("post-migration", true);
   }
 }
-async function syncDatabase(_reason) {
+async function syncDatabase(_reason, throwOnError = false) {
   if (!database || !databaseUsesEmbeddedReplica) return;
   if (!syncInProgress) {
     syncInProgress = database.sync().catch((error) => {
+      if (throwOnError) throw error;
       console.warn("Database sync failed:", error);
     }).finally(() => {
       syncInProgress = null;
     });
   }
   await syncInProgress;
+}
+function getEmbeddedReplicaPath() {
+  return process.env.DATABASE_REPLICA_PATH || path.join(dataDir, "outreach-replica.sqlite");
+}
+function resetEmbeddedReplicaFiles() {
+  const replicaPath = getEmbeddedReplicaPath();
+  for (const suffix of ["", "-wal", "-shm", "-info"]) {
+    try {
+      fs.rmSync(`${replicaPath}${suffix}`, { force: true });
+    } catch {
+    }
+  }
+}
+function isWalConflict(error) {
+  let current = error;
+  while (current && typeof current === "object") {
+    const record = current;
+    if (String(record.message || "").toLowerCase().includes("walconflict")) return true;
+    if (String(record.code || "").toLowerCase().includes("walconflict")) return true;
+    current = record.cause;
+  }
+  return false;
 }
 function scheduleDatabaseSync() {
   if (!database || !databaseUsesEmbeddedReplica || syncInProgress) return;
@@ -2182,6 +2702,14 @@ async function createOpenTask(prospectId, type, title, dueDate) {
     await run("INSERT INTO tasks (prospect_id, type, title, due_date) VALUES (?, ?, ?, ?)", [prospectId, type, title, dueDate]);
   }
 }
+async function clearUnsentGeneratedMessages(prospectId) {
+  await run(`
+    DELETE FROM messages
+    WHERE prospect_id = ?
+      AND sent_date IS NULL
+      AND type IN ('connection', 'report', 'report_no_note', 'followup', 'twitter_dm', 'twitter_followup')
+  `, [prospectId]);
+}
 async function completeOpenTask(prospectId, type) {
   await run(`
     UPDATE tasks
@@ -2240,7 +2768,11 @@ function addDaysIso(dateIso, days) {
 function shortDayLabel(dateIso) {
   return dateIso.slice(5).replace("-", "/");
 }
+function escapeLike(value) {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
 function withDerivedMessages(prospect) {
+  const canDeriveOutreachCopy = prospect.status !== "skipped" && prospect.status !== "saved_for_later" && !(prospect.status === "to_contact" && !prospect.contact_now);
   const noNoteFallback = noNoteReportFallback(
     prospect.name,
     prospect.brief_topic,
@@ -2254,7 +2786,7 @@ function withDerivedMessages(prospect) {
     source_channel: prospect.source_channel || "linkedin",
     outreach_mode: prospect.outreach_mode || "with_note",
     connection_note_sent: prospect.connection_note_sent || 0,
-    post_acceptance_message: prospect.outreach_mode === "no_note" ? prospect.no_note_report_message ? sanitizeNoNoteMessage(prospect.no_note_report_message, noNoteFallback) : rewriteReportForNoNote(prospect.report_message, prospect.name, prospect.brief_topic, prospect.position, prospect.about, prospect.recommended_template, prospect.workspace_name || "Tempolis") : prospect.report_message
+    post_acceptance_message: !canDeriveOutreachCopy ? null : prospect.outreach_mode === "no_note" ? prospect.no_note_report_message ? sanitizeNoNoteMessage(prospect.no_note_report_message, noNoteFallback) : rewriteReportForNoNote(prospect.report_message, prospect.name, prospect.brief_topic, prospect.position, prospect.about, prospect.recommended_template, prospect.workspace_name || "Tempolis") : prospect.report_message
   };
 }
 function rewriteReportForNoNote(content, name, topic, position, about, template, productName = "Tempolis") {
@@ -2265,11 +2797,20 @@ function rewriteReportForNoNote(content, name, topic, position, about, template,
 }
 function noNoteReportFallback(name, topic, position, about, template, productName = "Tempolis") {
   const firstName2 = name.split(/\s+/)[0] || name;
-  const briefTopic = topic || "your policy area";
-  const context = prospectContext$1(position, about, template);
+  const briefTopic = topic || "";
+  const context = isNarralensProduct$1(productName) ? narralensProspectContext(position, about, template) : prospectContext$1(position, about, template);
+  if (isNarralensProduct$1(productName)) {
+    return `Hi ${firstName2},
+
+Thanks for connecting. I'm building ${productName} for brand, social, and PR teams, and I wanted to test whether this kind of short narrative brief could be useful${briefTopic ? `, starting with ${briefTopic}` : ""}.
+
+[shared link]
+
+If the format feels useful for campaign monitoring, client updates, or positioning work, I'd really value your blunt feedback.`;
+  }
   return `Hi ${firstName2},
 
-Thanks for connecting. I'm building ${productName}, a tool for public affairs narrative briefs, and I prepared a short brief on ${briefTopic} because it seems close to your work on ${context}.
+Thanks for connecting. I'm building ${productName}, a tool for public affairs narrative briefs, and I prepared a short brief${briefTopic ? ` on ${briefTopic}` : ""} because it seems close to your work on ${context}.
 
 [shared link]
 
@@ -2284,6 +2825,16 @@ function prospectContext$1(position, about, template) {
   if (/\b(communications|comms|media|narrative|reputation)\b/.test(text)) return "strategic communications";
   if (/\b(government affairs|public affairs|policy|regulatory|eu affairs|brussels)\b/.test(text)) return "public affairs and policy";
   return "policy and public affairs";
+}
+function narralensProspectContext(position, about, template) {
+  const text = `${position || ""} ${about || ""} ${template || ""}`.toLowerCase();
+  if (/\b(agency|client|account|consult|advisory)\b/.test(text)) return "agency and client update work";
+  if (/\b(pr|communications|public relations|media)\b/.test(text)) return "PR and communications work";
+  if (/\b(brand|marketing|campaign|social|content)\b/.test(text)) return "brand and campaign work";
+  return "brand, social, or PR work";
+}
+function isNarralensProduct$1(productName) {
+  return productName.trim().toLowerCase() === "narralens";
 }
 async function generateNoNoteRewrite(prospectId) {
   loadLocalEnv$1();
@@ -2341,6 +2892,102 @@ async function generateNoNoteRewrite(prospectId) {
   });
   return normalizeNoNoteRewrite(parsed, prospect, workspace.product_name);
 }
+async function generateMessagesFromLatestEvidence(prospectId) {
+  loadLocalEnv$1();
+  const detail = await getProspectDetail(prospectId);
+  if (!detail) throw new Error("Prospect not found");
+  const { prospect, latestEvidence } = detail;
+  const workspace = prospect.workspace_id ? await one("SELECT * FROM workspaces WHERE id = ?", [prospect.workspace_id]) : await getActiveWorkspace();
+  if (!workspace) throw new Error("Workspace not found.");
+  const channel = prospect.source_channel === "twitter" ? "twitter" : "linkedin";
+  const [template, docs] = await Promise.all([
+    getActivePromptTemplate(workspace.id, channel, "message_regeneration"),
+    getWorkspaceDocs(workspace.id)
+  ]);
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing OPENROUTER_API_KEY. Add it to .env or your shell env.");
+  }
+  const evidence = latestEvidence ? {
+    id: latestEvidence.id,
+    sourceChannel: latestEvidence.source_channel,
+    captureSource: latestEvidence.capture_source,
+    createdAt: latestEvidence.created_at,
+    summaryText: latestEvidence.summary_text,
+    payload: safeJsonParse(latestEvidence.payload_json)
+  } : {
+    sourceChannel: channel,
+    captureSource: "fallback_current_prospect",
+    summaryText: "No extension capture is stored for this prospect yet. Use the current prospect fields as fallback context.",
+    payload: null
+  };
+  const prompt = renderMessageRegenerationPrompt(template.user_prompt, workspace, docs, prospect, evidence);
+  const model = template.model || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:4377",
+      "X-Title": "Outreach App"
+    },
+    body: JSON.stringify({
+      model,
+      temperature: template.temperature,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: template.system_prompt
+        },
+        { role: "user", content: prompt }
+      ]
+    })
+  });
+  if (!response.ok) {
+    const detailText = await response.text();
+    throw new Error(`OpenRouter request failed (${response.status}): ${detailText.slice(0, 600)}`);
+  }
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenRouter returned an empty response.");
+  const parsed = parseJson$1(content);
+  await recordPromptRun({
+    workspaceId: workspace.id,
+    promptTemplateId: template.id,
+    prospectId: prospect.id,
+    inputJson: { prompt, prospectId: prospect.id, evidenceId: latestEvidence?.id || null },
+    outputJson: parsed,
+    model
+  });
+  return normalizeMessageRegeneration(parsed, prospect, workspace.product_name, workspace.default_language || "en");
+}
+function renderMessageRegenerationPrompt(template, workspace, docs, prospect, evidence) {
+  return template.replaceAll("{{productName}}", workspace.product_name).replaceAll("{{workspaceName}}", workspace.name).replaceAll("{{defaultLanguage}}", workspace.default_language || "en").replaceAll("{{workspaceDocs}}", formatWorkspaceDocs$1(docs)).replaceAll("{{prospectJson}}", JSON.stringify({
+    id: prospect.id,
+    name: prospect.name,
+    position: prospect.position,
+    about: prospect.about,
+    profileUrl: prospect.profile_url,
+    sourceChannel: prospect.source_channel,
+    outreachMode: prospect.outreach_mode,
+    priorityTag: prospect.priority_tag,
+    wave: prospect.wave,
+    rationale: prospect.rationale,
+    recommendedTemplate: prospect.recommended_template,
+    briefTopic: prospect.brief_topic,
+    briefPreparation: prospect.preparation_notes,
+    sharedUrl: prospect.shared_url || "[shared link]"
+  }, null, 2)).replaceAll("{{evidenceJson}}", JSON.stringify(evidence, null, 2)).replaceAll("{{currentCopyJson}}", JSON.stringify({
+    connectionNote: prospect.connection_message,
+    afterAcceptanceWithNote: prospect.report_message,
+    existingNoNoteMessage: prospect.no_note_report_message,
+    postAcceptanceMessage: prospect.post_acceptance_message,
+    followup: prospect.followup_message,
+    twitterDm: prospect.twitter_dm_message,
+    twitterFollowup: prospect.twitter_followup_message
+  }, null, 2));
+}
 function renderNoNoteRewritePrompt(template, workspace, docs, prospect) {
   return template.replaceAll("{{productName}}", workspace.product_name).replaceAll("{{workspaceName}}", workspace.name).replaceAll("{{defaultLanguage}}", workspace.default_language || "en").replaceAll("{{workspaceDocs}}", formatWorkspaceDocs$1(docs)).replaceAll("{{prospectJson}}", JSON.stringify({
     name: prospect.name,
@@ -2374,6 +3021,105 @@ function normalizeNoNoteRewrite(value, prospect, productName = "Tempolis") {
     followupMessage: sanitizeNoNoteMessage(String(input.followupMessage || ""), fallbackFollowup)
   };
 }
+function normalizeMessageRegeneration(value, prospect, productName = "Tempolis", defaultLanguage = "en") {
+  const input = value;
+  if (prospect.source_channel === "twitter") {
+    const twitterDmFallbackText = twitterDmFallback$1(prospect, productName);
+    const twitterFollowupFallback = `Hi ${firstName(prospect.name)}, quick follow-up in case the brief slipped through. Any blunt read on whether the angle is useful would help.`;
+    return {
+      twitterDmMessage: sanitizeGeneratedMessage(String(input.twitterDmMessage || ""), twitterDmFallbackText, {
+        defaultLanguage,
+        briefTopic: prospect.brief_topic,
+        requireSharedLink: true
+      }),
+      twitterFollowupMessage: sanitizeGeneratedMessage(String(input.twitterFollowupMessage || ""), twitterFollowupFallback, {
+        defaultLanguage,
+        briefTopic: prospect.brief_topic
+      })
+    };
+  }
+  const connectionFallback = linkedInConnectionFallback(prospect, productName);
+  const reportFallback = linkedInReportFallback(prospect, productName);
+  const fallbackNoNote = noNoteReportFallback(prospect.name, prospect.brief_topic, prospect.position, prospect.about, prospect.recommended_template, productName);
+  return {
+    connectionMessage: sanitizeGeneratedMessage(String(input.connectionMessage || ""), connectionFallback, {
+      defaultLanguage,
+      briefTopic: prospect.brief_topic,
+      maxLength: 300
+    }).slice(0, 300),
+    reportMessage: sanitizeGeneratedMessage(String(input.reportMessage || ""), reportFallback, {
+      defaultLanguage,
+      briefTopic: prospect.brief_topic,
+      requireSharedLink: true
+    }),
+    noNoteReportMessage: sanitizeNoNoteMessage(
+      sanitizeGeneratedMessage(String(input.noNoteReportMessage || ""), prospect.no_note_report_message || fallbackNoNote, {
+        defaultLanguage,
+        briefTopic: prospect.brief_topic,
+        requireSharedLink: true
+      }),
+      prospect.no_note_report_message || fallbackNoNote
+    ),
+    followupMessage: sanitizeGeneratedMessage(String(input.followupMessage || ""), `Hi ${firstName(prospect.name)}, following up in case the brief slipped through. No worries if this isn't the right timing.`, {
+      defaultLanguage,
+      briefTopic: prospect.brief_topic
+    })
+  };
+}
+function sanitizeGeneratedMessage(value, fallback, options2 = {}) {
+  const cleanValue = value.trim();
+  if (!cleanValue) return fallback;
+  if ((options2.defaultLanguage || "en").toLowerCase().startsWith("en") && isFrenchLikeMessage(cleanValue)) return fallback;
+  if (/\b(used the signals|signals on your profile|profile evidence|scraped|visible activity)\b/i.test(cleanValue)) return fallback;
+  if (/\bbref\b/i.test(cleanValue)) return fallback;
+  if (options2.requireSharedLink && !/\[shared link\]/i.test(cleanValue)) return fallback;
+  if (!options2.briefTopic && /\b(on|sur)\s+[\"'“‘][^"'”’]+[\"'”’]/i.test(cleanValue)) return fallback;
+  if (!options2.briefTopic && /\b(picked|starting with|prepared (?:a|one|this)? ?(?:short )?(?:brief|test brief) on)\b/i.test(cleanValue)) return fallback;
+  if (options2.maxLength && cleanValue.length > options2.maxLength) return fallback;
+  return cleanValue;
+}
+function linkedInConnectionFallback(prospect, productName) {
+  const first = firstName(prospect.name);
+  if (isNarralensProduct$1(productName)) {
+    const context2 = narralensProspectContext(prospect.position, prospect.about, prospect.recommended_template);
+    return `Hi ${first}, I'm building ${productName} for brand, social, and PR teams and testing whether short narrative briefs are useful in ${context2}. Thought this might be worth sharing.`;
+  }
+  const context = prospectContext$1(prospect.position, prospect.about, prospect.recommended_template);
+  return `Hi ${first}, I'm building ${productName} and testing whether short issue briefs are useful for people working in ${context}. Thought this might be relevant.`;
+}
+function linkedInReportFallback(prospect, productName) {
+  const first = firstName(prospect.name);
+  if (isNarralensProduct$1(productName)) {
+    const context2 = narralensProspectContext(prospect.position, prospect.about, prospect.recommended_template);
+    return `Hi ${first},
+
+Thanks for connecting. I'm building ${productName} for brand, social, and PR teams, and I wanted to test whether this kind of short narrative brief could be useful for ${context2}${prospect.brief_topic ? `, using ${prospect.brief_topic} as the starting point` : ""}.
+
+[shared link]
+
+If the format feels useful for campaign monitoring, client updates, or positioning work, I'd really value your blunt feedback.`;
+  }
+  const context = prospectContext$1(prospect.position, prospect.about, prospect.recommended_template);
+  return `Hi ${first},
+
+Thanks for connecting. I'm building ${productName} and testing whether short issue briefs can be useful for ${context}${prospect.brief_topic ? `, using ${prospect.brief_topic} as the first angle` : ""}.
+
+[shared link]
+
+If the format feels useful, or if the angle is off, I'd value your feedback.`;
+}
+function isFrenchLikeMessage(value) {
+  return /\b(salut|bonjour|merci|acceptation|bref|bref sur|ton avis|je teste|j'ai prépar|ça|résonne|missions|petit suivi)\b/i.test(value);
+}
+function twitterDmFallback$1(prospect, productName) {
+  return `Hi ${firstName(prospect.name)}, I'm building ${productName} and testing short briefs around public conversations.
+
+I prepared a short test brief${prospect.brief_topic ? ` on ${prospect.brief_topic}` : ""}.
+
+[shared link]
+
+Would value a blunt read on whether the angle is useful.`;
+}
 function sanitizeNoNoteMessage(value, fallback) {
   const cleanValue = value.trim();
   if (!cleanValue) return fallback;
@@ -2392,6 +3138,13 @@ function parseJson$1(content) {
   const trimmed = content.trim();
   const json = trimmed.startsWith("```") ? trimmed.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim() : trimmed;
   return JSON.parse(json);
+}
+function safeJsonParse(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 function loadLocalEnv$1() {
   const envPath = path.join(rootDir, ".env");
@@ -2469,6 +3222,12 @@ TASK
 - Generate two post-acceptance variants:
   - reportMessage assumes a custom connection note was sent and may refer to the promised brief.
   - noNoteReportMessage assumes no custom connection note was sent; it must open naturally with "Thanks for connecting" or equivalent.
+- For both reportMessage and noNoteReportMessage, make the message feel motivated by the actual profile data without sounding like surveillance.
+- Include light builder context when useful so the recipient understands why a stranger is sharing a brief.
+- Use the profile evidence to choose the angle, tone, and reason for relevance; do not copy a fixed message architecture.
+- If the evidence is a repost, like, or activity item, phrase it as an interest or public signal, not as proof that the prospect owns that subject professionally.
+- Avoid creepy/internal wording such as "I used the signals on your profile", "profile evidence", "scraped", or "visible activity".
+- Avoid mass-outreach patterns: vary opener, sentence rhythm, message length, transition into the brief, and feedback ask across every prospect in the batch.
 - Generate the J+2 follow-up.
 - Do not invent facts beyond the profile fields.
 
@@ -2601,6 +3360,10 @@ NARRALENS-SPECIFIC RULES
 - If the profile only shows broad brand/social/PR experience, pick a famous concrete test case relevant to that workflow rather than a generic concept.
 - Brief preparation should explain why this concrete case is useful for their workflow: campaign readout, launch reaction, competitor narrative check, client update, crisis/backlash scan, or positioning decision.
 - Outreach copy must not say "your work on [topic]" unless the profile explicitly says they work on that exact topic. Safer wording: "as a concrete test case for campaign/competitor readouts" or "given your brand/social/PR work".
+- LinkedIn first messages must not be generic. The reader should understand why this brief was chosen for them, but the wording should feel natural and human rather than analytical.
+- Mention the builder/testing context when it makes the approach feel less abrupt.
+- Do not use one reusable sentence pattern. Let the profile data decide the opener, bridge, and feedback ask for each prospect.
+- Avoid creepy/internal wording such as "signals on your profile", "profile evidence", or "I used your profile".
 - The product promise is business/workflow value, not concept analysis: faster campaign reads, launch monitoring, competitor checks, client updates, and internal decision briefs.
 `;
 const DEFAULT_NARRALENS_LINKEDIN_BATCH_USER_PROMPT = `${DEFAULT_LINKEDIN_BATCH_USER_PROMPT}${NARRALENS_TOPIC_RULES}`;
@@ -2611,7 +3374,7 @@ const DEFAULT_NARRALENS_NO_NOTE_USER_PROMPT = `${DEFAULT_NO_NOTE_USER_PROMPT}${N
 - The no-note first message should frame the brief as "a concrete test case" for their workflow.
 - Prefer wording like "I prepared a short Narralens brief on [briefTopic] as a concrete campaign/competitor readout" over "I prepared a brief on brand perception."
 `;
-async function loader$d({
+async function loader$e({
   request
 }) {
   const url = new URL(request.url);
@@ -2623,6 +3386,7 @@ const _app = UNSAFE_withComponentProps(function AppLayout() {
   return /* @__PURE__ */ jsxs(AppShell, {
     workspaces: shellData.workspaces,
     activeWorkspace: shellData.activeWorkspace,
+    todoSummaries: shellData.todoSummaries,
     children: [/* @__PURE__ */ jsx(Outlet, {}), /* @__PURE__ */ jsx(Toaster, {
       richColors: true,
       closeButton: true,
@@ -2633,58 +3397,8 @@ const _app = UNSAFE_withComponentProps(function AppLayout() {
 const route2 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   default: _app,
-  loader: loader$d
+  loader: loader$e
 }, Symbol.toStringTag, { value: "Module" }));
-const badgeVariants = cva(
-  "inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1 [&>svg]:pointer-events-none transition-[color,box-shadow] overflow-hidden",
-  {
-    variants: {
-      variant: {
-        default: "border-transparent bg-primary text-primary-foreground",
-        secondary: "border-transparent bg-secondary text-secondary-foreground",
-        destructive: "border-transparent bg-destructive text-destructive-foreground",
-        outline: "text-foreground",
-        success: "border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-        warning: "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-400",
-        info: "border-transparent bg-sky-500/15 text-sky-700 dark:text-sky-400",
-        muted: "border-transparent bg-muted text-muted-foreground"
-      }
-    },
-    defaultVariants: {
-      variant: "default"
-    }
-  }
-);
-function Badge({ className, variant, asChild = false, ...props }) {
-  const Comp = asChild ? Slot : "span";
-  return /* @__PURE__ */ jsx(
-    Comp,
-    {
-      "data-slot": "badge",
-      className: cn(badgeVariants({ variant }), className),
-      ...props
-    }
-  );
-}
-function Input({ className, type, ...props }) {
-  return /* @__PURE__ */ jsx(
-    "input",
-    {
-      type,
-      "data-slot": "input",
-      className: cn(
-        "flex h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none md:text-sm",
-        "file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground",
-        "placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground",
-        "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50",
-        "aria-invalid:border-destructive aria-invalid:ring-destructive/30",
-        "disabled:cursor-not-allowed disabled:opacity-50",
-        className
-      ),
-      ...props
-    }
-  );
-}
 function Accordion(props) {
   return /* @__PURE__ */ jsx(AccordionPrimitive.Root, { "data-slot": "accordion", ...props });
 }
@@ -2821,7 +3535,7 @@ const meta$5 = () => [{
   name: "description",
   content: "Internal outreach tracker."
 }];
-async function loader$c({
+async function loader$d({
   params
 }) {
   const workspace = await requireWorkspace(params.workspaceSlug);
@@ -2840,6 +3554,14 @@ const home = UNSAFE_withComponentProps(function Home() {
   const data2 = useLoaderData();
   const activeProspects = data2.prospects.filter((prospect) => !["saved_for_later", "skipped", "archived_declined", "archived"].includes(prospect.status));
   const todoItems = buildTodoItems(data2);
+  useEffect(() => {
+    if (window.location.hash !== "#todos") return;
+    window.requestAnimationFrame(() => {
+      document.getElementById("todos")?.scrollIntoView({
+        block: "start"
+      });
+    });
+  }, [data2.workspace.slug]);
   return /* @__PURE__ */ jsx("div", {
     className: "px-6 py-8",
     children: /* @__PURE__ */ jsxs("div", {
@@ -2994,6 +3716,8 @@ const home = UNSAFE_withComponentProps(function Home() {
         children: [/* @__PURE__ */ jsxs("div", {
           className: "space-y-8",
           children: [/* @__PURE__ */ jsxs("section", {
+            id: "todos",
+            className: "scroll-mt-16",
             children: [/* @__PURE__ */ jsx(SectionTitle$1, {
               title: "Todo",
               detail: "Highest-priority actions across the pipeline."
@@ -4058,7 +4782,7 @@ const route3 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   __proto__: null,
   action: action$6,
   default: home,
-  loader: loader$c,
+  loader: loader$d,
   meta: meta$5
 }, Symbol.toStringTag, { value: "Module" }));
 function Label({
@@ -4208,7 +4932,7 @@ const meta$4 = () => [{
   name: "description",
   content: "Browse and filter prospects stored in the outreach CRM."
 }];
-async function loader$b({
+async function loader$c({
   params
 }) {
   const workspace = await requireWorkspace(params.workspaceSlug);
@@ -4379,7 +5103,7 @@ function filterProspects(prospects, query, status) {
 const route4 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   default: prospects__index,
-  loader: loader$b,
+  loader: loader$c,
   meta: meta$4
 }, Symbol.toStringTag, { value: "Module" }));
 function Textarea({ className, ...props }) {
@@ -4407,7 +5131,7 @@ const meta$3 = ({
     title: `${name} · Outreach`
   }];
 };
-async function loader$a({
+async function loader$b({
   params
 }) {
   const id = Number(params.id);
@@ -4443,6 +5167,7 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
     tasks,
     events,
     replies,
+    latestEvidence,
     today
   } = detail;
   const openTasks = tasks.filter((task) => task.status === "open");
@@ -4450,8 +5175,9 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
   const showConnectionNote = prospect.outreach_mode !== "no_note" || prospect.connection_note_sent === 1;
   const connectionLocked = Boolean(prospect.connection_sent_date);
   const reportLocked = Boolean(prospect.report_sent_date);
+  const isOutreachReady = !["skipped", "saved_for_later", "archived_declined", "archived"].includes(prospect.status) && !(prospect.status === "to_contact" && !prospect.contact_now);
   const archiveMode = Boolean(prospect.report_sent_date) || ["reply_sent", "followup_sent"].includes(prospect.status);
-  const defaultOpen = [prospect.source_channel === "linkedin" && !archiveMode ? "outreach-mode" : null, !archiveMode ? "brief" : null, !archiveMode ? "messages" : null, prospect.notes ? "notes" : null].filter((item) => Boolean(item));
+  const defaultOpen = [prospect.source_channel === "linkedin" && !archiveMode && isOutreachReady ? "outreach-mode" : null, !archiveMode ? "brief" : null, !archiveMode && isOutreachReady ? "messages" : null, prospect.notes ? "notes" : null].filter((item) => Boolean(item));
   return /* @__PURE__ */ jsx("div", {
     className: "px-6 py-8",
     children: /* @__PURE__ */ jsxs("div", {
@@ -4536,7 +5262,7 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
             type: "multiple",
             defaultValue: defaultOpen,
             className: "space-y-4",
-            children: [prospect.source_channel === "linkedin" ? /* @__PURE__ */ jsx(SectionAccordion, {
+            children: [prospect.source_channel === "linkedin" && isOutreachReady ? /* @__PURE__ */ jsx(SectionAccordion, {
               value: "outreach-mode",
               title: "Outreach mode",
               detail: "Switch the copy strategy before sending.",
@@ -4661,22 +5387,30 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
                   })]
                 })]
               })
-            }), /* @__PURE__ */ jsxs(SectionAccordion, {
+            }), isOutreachReady ? /* @__PURE__ */ jsxs(SectionAccordion, {
               value: "messages",
               title: "Messages",
               detail: prospect.source_channel === "twitter" ? "Copy exact Twitter/X copy." : "Copy exact LinkedIn copy.",
-              children: [prospect.source_channel === "linkedin" ? /* @__PURE__ */ jsx("div", {
+              children: [/* @__PURE__ */ jsxs("div", {
                 className: "mb-4 flex flex-wrap gap-2 rounded-lg border bg-muted/30 p-3",
-                children: /* @__PURE__ */ jsx(ActionButton, {
-                  intent: "regenerateSaferCopy",
+                children: [/* @__PURE__ */ jsx(ActionButton, {
+                  intent: "regenerateFromLatestCapture",
                   prospectId: prospect.id,
-                  label: "Regenerate safer copy",
+                  label: latestEvidence ? "Regenerate from latest capture" : "Regenerate from current context",
                   icon: /* @__PURE__ */ jsx(RefreshCw, {
                     size: 16
                   }),
                   variant: "outline"
-                })
-              }) : null, prospect.source_channel === "twitter" ? /* @__PURE__ */ jsxs("div", {
+                }), prospect.source_channel === "linkedin" ? /* @__PURE__ */ jsx(ActionButton, {
+                  intent: "regenerateSaferCopy",
+                  prospectId: prospect.id,
+                  label: "No-note rewrite",
+                  icon: /* @__PURE__ */ jsx(RefreshCw, {
+                    size: 16
+                  }),
+                  variant: "outline"
+                }) : null]
+              }), prospect.source_channel === "twitter" ? /* @__PURE__ */ jsxs("div", {
                 className: "grid gap-3",
                 children: [/* @__PURE__ */ jsx(MessageEditor, {
                   prospectId: prospect.id,
@@ -4712,7 +5446,41 @@ const prospect_$id = UNSAFE_withComponentProps(function ProspectDetail() {
                   content: prospect.followup_message
                 })]
               })]
+            }) : /* @__PURE__ */ jsx(SectionAccordion, {
+              value: "messages-disabled",
+              title: "Messages",
+              detail: "This prospect is not outreach-ready.",
+              children: /* @__PURE__ */ jsx("div", {
+                className: "rounded-lg border border-dashed p-4 text-sm text-muted-foreground",
+                children: "No outreach copy is generated for prospects marked `SKIP`, `SAVE`, archived, or not contactable now."
+              })
             })]
+          }), /* @__PURE__ */ jsx(Accordion, {
+            type: "multiple",
+            children: /* @__PURE__ */ jsx(SectionAccordion, {
+              value: "captured-evidence",
+              title: "Latest captured evidence",
+              detail: latestEvidence ? `${latestEvidence.capture_source} · ${latestEvidence.source_channel} · ${latestEvidence.created_at}` : "No extension capture stored yet.",
+              children: latestEvidence ? /* @__PURE__ */ jsxs("div", {
+                className: "space-y-3",
+                children: [/* @__PURE__ */ jsxs("div", {
+                  className: "flex flex-wrap gap-2",
+                  children: [/* @__PURE__ */ jsx(Badge, {
+                    variant: "muted",
+                    children: latestEvidence.capture_source
+                  }), /* @__PURE__ */ jsx(Badge, {
+                    variant: "info",
+                    children: latestEvidence.source_channel
+                  }), /* @__PURE__ */ jsx(Badge, {
+                    variant: "muted",
+                    children: latestEvidence.created_at
+                  })]
+                }), /* @__PURE__ */ jsx("pre", {
+                  className: "max-h-72 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground",
+                  children: latestEvidence.summary_text
+                })]
+              }) : /* @__PURE__ */ jsx(EmptyState, {})
+            })
           }), /* @__PURE__ */ jsxs(Card, {
             children: [/* @__PURE__ */ jsxs(CardHeader, {
               children: [/* @__PURE__ */ jsx(CardTitle, {
@@ -5464,80 +6232,40 @@ const route5 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   __proto__: null,
   action: action$5,
   default: prospect_$id,
-  loader: loader$a,
+  loader: loader$b,
   meta: meta$3
 }, Symbol.toStringTag, { value: "Module" }));
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(appDir, "..", "..", "..");
 async function analyzeProspectTable(tableText, workspace) {
-  loadLocalEnv();
   const prospects = parseProspectTable(tableText);
   if (prospects.length === 0) {
     throw new Error("No prospects found. Paste a table with Name, Position, Profile URL and About columns.");
   }
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing OPENROUTER_API_KEY. Add it to your shell env before running npm run dev.");
-  }
-  const template = await getActivePromptTemplate(workspace.id, "linkedin", "batch_analysis");
-  const docs = await getWorkspaceDocs(workspace.id);
-  const model = template.model || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
-  const prompt = renderPrompt(template.user_prompt, {
-    workspace,
-    docs,
-    prospects
-  });
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "http://localhost:4377",
-      "X-Title": "Outreach App"
-    },
-    body: JSON.stringify({
-      model,
-      temperature: template.temperature,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: template.system_prompt
-        },
-        { role: "user", content: prompt }
-      ]
-    })
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`OpenRouter request failed (${response.status}): ${detail.slice(0, 600)}`);
-  }
-  const payload = await response.json();
-  const content = payload?.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error("OpenRouter returned an empty response.");
-  }
-  const parsed = parseJson(content);
-  await recordPromptRun({
-    workspaceId: workspace.id,
-    promptTemplateId: template.id,
-    inputJson: { tableText, prospects, prompt },
-    outputJson: parsed,
-    model
-  });
-  return normalizeAnalysis(parsed, prospects.length, workspace.product_name);
+  return await analyzeRawProspects(prospects, workspace, "linkedin", { tableText });
 }
 async function analyzeTwitterProspectTable(tableText, workspace) {
-  loadLocalEnv();
   const prospects = parseProspectTable(tableText);
   if (prospects.length === 0) {
     throw new Error("No Twitter/X prospects found. Add at least a name and profile URL or handle.");
   }
+  return await analyzeRawProspects(prospects, workspace, "twitter", { tableText });
+}
+async function analyzeLinkedInExtensionProspect(profile, workspace) {
+  const prospects = [extensionProfileToRawProspect(profile, "linkedin")];
+  return await analyzeRawProspects(prospects, workspace, "linkedin", { extensionPayload: profile });
+}
+async function analyzeTwitterExtensionProspect(profile, workspace) {
+  const prospects = [extensionProfileToRawProspect(profile, "twitter")];
+  return await analyzeRawProspects(prospects, workspace, "twitter", { extensionPayload: profile });
+}
+async function analyzeRawProspects(prospects, workspace, channel, inputJson) {
+  loadLocalEnv();
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     throw new Error("Missing OPENROUTER_API_KEY. Add it to your shell env before running npm run dev.");
   }
-  const template = await getActivePromptTemplate(workspace.id, "twitter", "batch_analysis");
+  const template = await getActivePromptTemplate(workspace.id, channel, "batch_analysis");
   const docs = await getWorkspaceDocs(workspace.id);
   const model = template.model || process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash-lite";
   const prompt = renderPrompt(template.user_prompt, {
@@ -5579,35 +6307,42 @@ async function analyzeTwitterProspectTable(tableText, workspace) {
   await recordPromptRun({
     workspaceId: workspace.id,
     promptTemplateId: template.id,
-    inputJson: { tableText, prospects, prompt },
+    inputJson: { ...inputJson, prospects, prompt, channel },
     outputJson: parsed,
     model
   });
-  return normalizeTwitterAnalysis(parsed, prospects.length, workspace.product_name);
+  const analysis = channel === "twitter" ? normalizeTwitterAnalysis(parsed, prospects.length, workspace.product_name) : normalizeAnalysis(parsed, prospects.length, workspace.product_name);
+  return applyExtensionClassificationRecovery(analysis, prospects, workspace, channel);
 }
-function prospectEvidenceToTable(profile) {
+function extensionProfileToRawProspect(profile, channel) {
+  const normalizedProfile = channel === "linkedin" ? sanitizeLinkedInExtensionProfile(profile) : profile;
+  const channelContext = channel === "twitter" ? [
+    normalizedProfile.signals,
+    normalizedProfile.activity ? `Visible X posts: ${normalizedProfile.activity}` : "",
+    normalizedProfile.rawText ? `Visible X page text: ${normalizedProfile.rawText}` : ""
+  ] : [
+    normalizedProfile.signals,
+    normalizedProfile.experience ? `LinkedIn experience: ${normalizedProfile.experience}` : "",
+    normalizedProfile.education ? `LinkedIn education: ${normalizedProfile.education}` : "",
+    normalizedProfile.activity ? `LinkedIn activity: ${normalizedProfile.activity}` : "",
+    normalizedProfile.rawText ? `Visible LinkedIn page text: ${normalizedProfile.rawText}` : ""
+  ];
   const evidence = [
-    "Source: browser extension single-profile capture.",
+    `Source: browser extension ${channel} single-profile capture.`,
     "Important: do not classify as LEARN by default. Apply the strict LEARN/WARM/SAVE/SKIP strategy.",
-    profile.signals,
-    profile.activity ? `Activity: ${profile.activity}` : "",
-    profile.experience ? `Experience: ${profile.experience}` : "",
-    profile.education ? `Education: ${profile.education}` : "",
-    profile.rawText ? `Visible page text: ${profile.rawText}` : ""
+    channel === "twitter" ? "Channel behavior: write Twitter/X DM copy, not LinkedIn connection copy." : `Channel behavior: write LinkedIn copy. Outreach mode requested: ${normalizedProfile.outreachMode || "no_note"}.`,
+    ...channelContext
   ].filter(Boolean).join("\n\n");
-  const header = ["Name", "Position", "Profile URL", "About", "Signals", "Brief direction"];
-  const row = [
-    profile.name || "",
-    profile.position || "",
-    profile.profileUrl || "",
-    profile.about || "",
-    evidence,
-    profile.briefDirection || ""
-  ].map(cleanCell).join("	");
-  return [header.join("	"), row].join("\n");
-}
-function cleanCell(value) {
-  return String(value || "").replace(/\t/g, " ").replace(/\r?\n/g, " ").trim();
+  return {
+    name: normalizedProfile.name || "",
+    position: normalizedProfile.position || "",
+    profileUrl: normalizedProfile.profileUrl || normalizedProfile.twitterUrl || "",
+    about: normalizedProfile.about || "",
+    signals: evidence,
+    briefDirection: normalizedProfile.briefDirection || "",
+    sourceChannel: channel,
+    extensionEvidence: normalizedProfile
+  };
 }
 function loadLocalEnv() {
   const envPath = path.join(repoRoot, "outreach-app", ".env");
@@ -5639,9 +6374,103 @@ SELECTION RULES
 - For a browser-extension single-profile capture, still choose WARM, SAVE, or SKIP when appropriate.
 - contactToday=true only for LEARN wave 1 profiles that are genuinely worth contacting now.
 - If the evidence is thin, generic, scraped footer text, or mostly unrelated page noise, prefer WARM or SKIP.
+- If the prospect is clearly inside the brand/social/PR/agency/communications ICP but the brief angle is still broad or needs refinement, prefer WARM over SKIP.
+- For a strong ICP-fit profile with enough real role/about/activity evidence, missing the perfect brief topic is not by itself a reason to SKIP.
 - If the profile is excellent but senior/premium enough that a weak early message could waste the opportunity, choose SAVE.
 - If there is no concrete brief angle, do not mark LEARN.
 `;
+function applyExtensionClassificationRecovery(analysis, inputs, workspace, channel) {
+  if (channel !== "linkedin" || !isNarralensProduct(workspace.product_name)) return analysis;
+  return {
+    ...analysis,
+    prospects: analysis.prospects.map((prospect, index) => recoverNarralensLinkedInExtensionProspect(prospect, inputs[index]))
+  };
+}
+function recoverNarralensLinkedInExtensionProspect(prospect, input) {
+  if (!input || prospect.priorityTag !== "SKIP" || input.sourceChannel !== "linkedin") return prospect;
+  const evidence = `${input.position} ${input.about} ${input.signals}`.toLowerCase();
+  const icpFit = /\b(communications?|comms|pr\b|public relations|brand|branding|social media|agency|editorial|content|campaign|marketing|reputation|influence|csr reporting|reporting)\b/.test(evidence);
+  const clearNoiseOnly = isMostlyLinkedInNoise(input.about) && clean$1(input.position).length < 10;
+  const richEnough = clean$1(input.about).length >= 280 || clean$1(input.signals).length >= 900 || clean$1(input.position).length >= 24;
+  if (!icpFit || clearNoiseOnly || !richEnough) return prospect;
+  return {
+    ...prospect,
+    priorityTag: "WARM",
+    wave: 2,
+    contactNow: false,
+    rationale: "Strong Narralens fit for agency/communications workflow, but the best outreach angle still needs refinement before first-wave contact."
+  };
+}
+function sanitizeLinkedInExtensionProfile(profile) {
+  const rawText = cleanLinkedInNoise(profile.rawText || "");
+  const position = clean$1(profile.position) || extractLinkedInHeadline(rawText, profile.name || "");
+  const about = sanitizeLinkedInSection(profile.about || "", rawText, ["Featured", "Activity", "Experience", "Education", "Skills", "Recommendations"]);
+  const activity = sanitizeLinkedInSection(profile.activity || "", rawText, ["Experience", "Education", "Skills", "Recommendations"]);
+  return {
+    ...profile,
+    position,
+    about,
+    activity,
+    rawText
+  };
+}
+function sanitizeLinkedInSection(section, rawText, endLabels) {
+  const cleanedSection = cleanLinkedInNoise(stripAfterLabels(section || "", endLabels));
+  if (cleanedSection && !isMostlyLinkedInNoise(cleanedSection)) return cleanedSection;
+  const extracted = cleanLinkedInNoise(extractSectionFromRawText(rawText, rawText.includes("About") ? "About" : "", endLabels));
+  return stripAfterLabels(extracted, endLabels);
+}
+function extractSectionFromRawText(rawText, startLabel, endLabels) {
+  if (!startLabel) return "";
+  const lines = String(rawText || "").split(/\n+/).map((line) => clean$1(line)).filter(Boolean);
+  const start = lines.findIndex((line) => line.toLowerCase() === startLabel.toLowerCase());
+  if (start === -1) return "";
+  const end = lines.findIndex((line, index) => index > start && endLabels.some((label) => line.toLowerCase() === label.toLowerCase()));
+  return lines.slice(start + 1, end === -1 ? start + 32 : end).join("\n");
+}
+function stripAfterLabels(value, labels) {
+  let output = String(value || "");
+  for (const label of labels) {
+    const pattern = new RegExp(`\\n${escapeRegExp(label)}\\n[\\s\\S]*$`, "i");
+    output = output.replace(pattern, "");
+  }
+  return output.trim();
+}
+function extractLinkedInHeadline(rawText, name) {
+  const lines = String(rawText || "").split(/\n+/).map((line) => clean$1(line)).filter(Boolean);
+  const start = lines.findIndex((line) => line === clean$1(name));
+  const candidates = (start === -1 ? lines : lines.slice(start + 1, start + 10)).filter((line) => line.length >= 12 && line.length <= 180).filter((line) => !/^(1st|2nd|3rd|contact info|message|pending|follow|connect|about)$/i.test(line)).filter((line) => !/^\d+\+?\s*(connections|followers?)$/i.test(line)).filter((line) => !/^(france|paris|brussels|london|new york|berlin)$/i.test(line));
+  return candidates[0] || "";
+}
+function cleanLinkedInNoise(value) {
+  return String(value || "").replace(/\bAccessibility\b[\s\S]*?Select language/gi, "").replace(/\bQuestions\?\b[\s\S]*?Select language/gi, "").replace(/\bLinkedIn Corporation © \d{4}\b[\s\S]*$/gi, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+function isMostlyLinkedInNoise(value) {
+  const text = clean$1(value).toLowerCase();
+  if (!text) return true;
+  const noiseHits = [
+    "accessibility",
+    "talent solutions",
+    "community guidelines",
+    "privacy & terms",
+    "advertising",
+    "sales solutions",
+    "small business",
+    "safety center",
+    "linkedin corporation",
+    "help center",
+    "manage your account and privacy",
+    "recommendation transparency",
+    "select language"
+  ].filter((needle) => text.includes(needle)).length;
+  return noiseHits >= 3 && text.length < 800;
+}
+function isNarralensProduct(productName = "") {
+  return clean$1(productName).toLowerCase() === "narralens";
+}
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 function formatWorkspaceDocs(docs) {
   return docs.map((doc) => `## ${doc.title} (${doc.type})
 ${doc.content.slice(0, 18e3)}`).join("\n\n---\n\n");
@@ -5744,18 +6573,14 @@ function normalizeProspect(item, productName = "Tempolis") {
     clean$1(item.connectionMessage),
     `Hi ${firstName2}, I'm building ${productName} and testing short briefs for public affairs professionals. I prepared one on ${briefTopic || "your policy area"}. Would value your view.`
   );
-  const reportMessage = enforceEnglish(
-    clean$1(item.reportMessage),
-    `Hi ${firstName2},
-
-As promised, the brief on ${briefTopic || "your policy area"}: what public discourse is saying over the last 24 hours, outside media coverage.
-
-[shared link]
-
-I'm testing it with relevant profiles before a proper launch. If the angle resonates, or if something feels off in the brief, your feedback would mean a lot.`
-  );
+  const reportFallback = reportFallbackCopy(firstName2, briefTopic, item.position, item.about, item.recommendedTemplate, productName);
+  const reportMessage = sanitizeNarralensFirstMessage(enforceEnglish(clean$1(item.reportMessage), reportFallback), reportFallback, productName);
   const noNoteFallback = noNoteFallbackCopy(firstName2, briefTopic, item.position, item.about, item.recommendedTemplate, productName);
-  const noNoteReportMessage = noPriorNoteCopy(enforceEnglish(clean$1(item.noNoteReportMessage), noNoteFallback), noNoteFallback);
+  const noNoteReportMessage = sanitizeNarralensFirstMessage(
+    noPriorNoteCopy(enforceEnglish(clean$1(item.noNoteReportMessage), noNoteFallback), noNoteFallback),
+    noNoteFallback,
+    productName
+  );
   const followupMessage = enforceEnglish(
     clean$1(item.followupMessage),
     `Hi ${firstName2}, following up in case the brief slipped through. No worries if this isn't the right timing.`
@@ -5915,25 +6740,132 @@ function fallbackBriefTopic(item, productName = "Tempolis") {
 function isNarralens(productName = "Tempolis") {
   return productName.toLowerCase() === "narralens";
 }
-function noNoteFallbackCopy(firstName2, briefTopic, position, about, template, productName = "Tempolis") {
-  const topic = briefTopic || "your policy area";
-  const context = prospectContext(position, about, template);
+function reportFallbackCopy(firstName2, briefTopic, position, about, template, productName = "Tempolis") {
+  const topic = briefTopic || "";
+  const context = isNarralens(productName) ? narralensProfileSignal(position, about, template) : prospectContext(position, about, template);
   if (isNarralens(productName)) {
-    return `Hi ${firstName2},
+    return pickFallbackVariant(`${firstName2}:${topic}:${context}:narralens-report`, [
+      `Hi ${firstName2},
 
-Thanks for connecting. I'm building ${productName} and testing short briefs for brand/social workflows, so I prepared one on ${topic} as a concrete campaign or competitor readout.
+I'm building ${productName}, a tool for turning public conversations into short campaign and competitor readouts. Given your background in ${context}, I thought this kind of short brief could be a relevant example${topic ? `, starting with ${topic}` : ""}.
 
 [shared link]
 
-If the angle feels useful for the kind of monitoring or client updates you deal with, your blunt feedback would help a lot.`;
+I'm testing whether this format is actually useful for monitoring, client updates, or positioning decisions. If the angle feels useful or off, your blunt feedback would help a lot.`,
+      `Hi ${firstName2},
+
+I'm currently building ${productName} for brand, social, and PR teams. Since your background touches ${context}, I wanted to test the format on a concrete brief rather than send a generic product pitch${topic ? `, and ${topic} seemed like a reasonable starting point` : ""}.
+
+[shared link]
+
+I'm trying to learn whether this kind of brief helps with campaign monitoring or client updates. A blunt read on the angle would be very helpful.`,
+      `Hi ${firstName2},
+
+I'm building ${productName} and testing a short brief format for campaign and competitor readouts. Your background in ${context} made me think this could be a relevant example${topic ? `, with ${topic} as the first angle` : ""}.
+
+[shared link]
+
+I'm testing the format with people close to brand, social, or PR workflows. If this feels useful or misses the mark, I'd value your read.`
+    ]);
   }
-  return `Hi ${firstName2},
+  return pickFallbackVariant(`${firstName2}:${topic}:${context}:tempolis-report`, [
+    `Hi ${firstName2},
+
+I'm building ${productName}, a tool for short public-discourse briefs. Given your background in ${context}, I prepared the brief on ${topic} as a concrete example.
+
+[shared link]
+
+I'm testing the format with relevant policy and public affairs profiles before a proper launch. If the angle resonates, or if something feels off, your feedback would mean a lot.`,
+    `Hi ${firstName2},
+
+I'm currently building ${productName} and testing brief formats with people close to policy and public affairs work. Since your background touches ${context}, I prepared this one on ${topic}.
+
+[shared link]
+
+I'm trying to learn whether this format is actually useful for policy or public affairs work. Any blunt reaction would help.`,
+    `Hi ${firstName2},
+
+I'm building ${productName} and testing whether short issue briefs can be useful in public affairs workflows. Given your background in ${context}, I thought ${topic} would be a relevant test case.
+
+[shared link]
+
+I'm testing whether the brief is useful enough for real public affairs workflows. If the angle feels useful or off, I'd value your read.`
+  ]);
+}
+function noNoteFallbackCopy(firstName2, briefTopic, position, about, template, productName = "Tempolis") {
+  const topic = briefTopic || "";
+  const context = prospectContext(position, about, template);
+  if (isNarralens(productName)) {
+    const signal = narralensProfileSignal(position, about, template);
+    return pickFallbackVariant(`${firstName2}:${topic}:${signal}:narralens-no-note`, [
+      `Hi ${firstName2},
+
+Thanks for connecting. I'm building ${productName}, a tool for turning public conversations into short campaign and competitor readouts. Given your background in ${signal}, I thought this kind of short brief could be a relevant example${topic ? `, starting with ${topic}` : ""}.
+
+[shared link]
+
+If the angle feels useful for the kind of monitoring or client updates you deal with, your blunt feedback would help a lot.`,
+      `Hi ${firstName2},
+
+Thanks for connecting. I'm currently building ${productName} for brand, social, and PR teams. Since your background touches ${signal}, I wanted to test the format on a concrete brief rather than send a generic pitch${topic ? `, and ${topic} was my starting point` : ""}.
+
+[shared link]
+
+I'm trying to learn whether this format would help with campaign monitoring or client updates. A blunt read would help.`,
+      `Hi ${firstName2},
+
+Thanks for connecting. I'm building ${productName} and testing a short brief format for campaign and competitor readouts. Your background in ${signal} made me think this could be a relevant example${topic ? `, with ${topic} as the first angle` : ""}.
+
+[shared link]
+
+If this feels useful for brand, social, or PR work, or if the angle is off, I'd value your feedback.`
+    ]);
+  }
+  return pickFallbackVariant(`${firstName2}:${topic}:${context}:tempolis-no-note`, [
+    `Hi ${firstName2},
 
 Thanks for connecting. I'm building ${productName} and testing short briefs, and I prepared one on ${topic} because it seems close to your work on ${context}.
 
 [shared link]
 
-If the angle feels useful, or if the signal is off for your workflow, your feedback would be very helpful.`;
+If the angle feels useful, or if the signal is off for your workflow, your feedback would be very helpful.`,
+    `Hi ${firstName2},
+
+Thanks for connecting. I'm building ${productName}, a tool for short public-discourse briefs. Given your background in ${context}, I prepared one on ${topic} as a concrete example.
+
+[shared link]
+
+I'm testing whether this format is useful for policy and public affairs work. Any blunt reaction would help.`,
+    `Hi ${firstName2},
+
+Thanks for connecting. I'm currently building ${productName} and testing brief formats with people close to policy and public affairs. Since your background touches ${context}, I prepared this one on ${topic}.
+
+[shared link]
+
+If this feels useful, or if the angle misses what you would need, I'd value your read.`
+  ]);
+}
+function pickFallbackVariant(seed, variants) {
+  const hash = [...seed].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return variants[hash % variants.length];
+}
+function sanitizeNarralensFirstMessage(value, fallback, productName = "Tempolis") {
+  if (!isNarralens(productName)) return value;
+  if (!value.trim()) return fallback;
+  if (!/\[shared link\]/i.test(value)) return fallback;
+  if (/\b(used the signals|signals on your profile|scraped|profile pointed me|from what i saw on your profile)\b/i.test(value)) return fallback;
+  if (/\byour work on\b/i.test(value) && /\b(repost|shared|activity|feed|interest)\b/i.test(value)) return fallback;
+  return value;
+}
+function narralensProfileSignal(position, about, template) {
+  const text = `${clean$1(position)} ${clean$1(about)} ${clean$1(template)}`.toLowerCase();
+  if (/\b(agency|client|consultant|consulting|account|advisory)\b/.test(text)) return "agency and client update work";
+  if (/\b(social|community|creator|tiktok|instagram|linkedin|content)\b/.test(text)) return "social and content signals";
+  if (/\b(pr|communications|comms|media|press|public relations)\b/.test(text)) return "PR and communications work";
+  if (/\b(brand|marketing|campaign|growth|positioning)\b/.test(text)) return "brand and campaign work";
+  if (/\b(founder|ceo|operator|startup)\b/.test(text)) return "founder-led positioning work";
+  if (/\b(reputation|crisis|risk|issues)\b/.test(text)) return "reputation and issue monitoring";
+  return "brand, social, or campaign signals";
 }
 function prospectContext(position, about, template) {
   const text = `${clean$1(position)} ${clean$1(about)} ${clean$1(template)}`.toLowerCase();
@@ -6907,7 +7839,7 @@ const meta = () => [{
   name: "description",
   content: "Workspace docs, prompts and model settings."
 }];
-async function loader$9({
+async function loader$a({
   params
 }) {
   const workspace = await requireWorkspace(params.workspaceSlug);
@@ -7213,10 +8145,10 @@ const route8 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   __proto__: null,
   action: action$3,
   default: settings,
-  loader: loader$9,
+  loader: loader$a,
   meta
 }, Symbol.toStringTag, { value: "Module" }));
-async function loader$8({
+async function loader$9({
   request
 }) {
   if (request.method === "OPTIONS") {
@@ -7257,7 +8189,7 @@ function corsHeaders$2(request) {
 }
 const route9 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  loader: loader$8
+  loader: loader$9
 }, Symbol.toStringTag, { value: "Module" }));
 async function action$2({
   request
@@ -7371,13 +8303,23 @@ async function action$1({
   const existingId = await findProspectByProfileUrl(profileUrl, workspace.id);
   if (existingId) {
     await setProspectOutreachPreference(existingId, normalizeOutreachMode(payload.outreachMode));
+    await saveProspectEvidence({
+      prospectId: existingId,
+      workspaceId: workspace.id,
+      sourceChannel: "linkedin",
+      captureSource: "extension",
+      payload: {
+        ...payload,
+        profileUrl,
+        sourceChannel: "linkedin"
+      }
+    });
     return respond(payload, existingId, true, workspace, request);
   }
-  const table = prospectEvidenceToTable({
+  const analysis = await analyzeLinkedInExtensionProspect({
     ...payload,
     profileUrl
-  });
-  const analysis = await analyzeProspectTable(table, workspace);
+  }, workspace);
   await importAnalyzedProspects(analysis.prospects, workspace.id);
   const id = await findProspectByProfileUrl(profileUrl, workspace.id);
   if (!id) {
@@ -7390,6 +8332,17 @@ async function action$1({
     });
   }
   await setProspectOutreachPreference(id, normalizeOutreachMode(payload.outreachMode));
+  await saveProspectEvidence({
+    prospectId: id,
+    workspaceId: workspace.id,
+    sourceChannel: "linkedin",
+    captureSource: "extension",
+    payload: {
+      ...payload,
+      profileUrl,
+      sourceChannel: "linkedin"
+    }
+  });
   return respond(payload, id, false, workspace, request);
 }
 async function handleTwitterPayload(payload, workspace, request) {
@@ -7405,14 +8358,25 @@ async function handleTwitterPayload(payload, workspace, request) {
   }
   const existingId = await findProspectByProfileUrl(profileUrl, workspace.id);
   if (existingId) {
+    await saveProspectEvidence({
+      prospectId: existingId,
+      workspaceId: workspace.id,
+      sourceChannel: "twitter",
+      captureSource: "extension",
+      payload: {
+        ...payload,
+        profileUrl,
+        twitterUrl: profileUrl,
+        sourceChannel: "twitter"
+      }
+    });
     return respond(payload, existingId, true, workspace, request);
   }
-  const table = prospectEvidenceToTable({
+  const analysis = await analyzeTwitterExtensionProspect({
     ...payload,
     profileUrl,
-    signals: [payload.signals, payload.activity ? `Visible posts: ${payload.activity}` : "", payload.rawText ? `Visible page text: ${payload.rawText}` : ""].filter(Boolean).join("\n\n")
-  });
-  const analysis = await analyzeTwitterProspectTable(table, workspace);
+    twitterUrl: profileUrl
+  }, workspace);
   await importAnalyzedProspects(analysis.prospects, workspace.id);
   const id = await findProspectByProfileUrl(profileUrl, workspace.id);
   if (!id) {
@@ -7424,6 +8388,18 @@ async function handleTwitterPayload(payload, workspace, request) {
       headers: corsHeaders(request)
     });
   }
+  await saveProspectEvidence({
+    prospectId: id,
+    workspaceId: workspace.id,
+    sourceChannel: "twitter",
+    captureSource: "extension",
+    payload: {
+      ...payload,
+      profileUrl,
+      twitterUrl: profileUrl,
+      sourceChannel: "twitter"
+    }
+  });
   return respond(payload, id, false, workspace, request);
 }
 async function workspaceFromPayload(payload, request) {
@@ -7487,13 +8463,28 @@ const route11 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.definePrope
   __proto__: null,
   action: action$1
 }, Symbol.toStringTag, { value: "Module" }));
+async function loader$8({
+  request
+}) {
+  const url = new URL(request.url);
+  const query = url.searchParams.get("q") || "";
+  const prospects = await searchProspectsGlobally(query, 8);
+  return data({
+    ok: true,
+    prospects
+  });
+}
+const route12 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  loader: loader$8
+}, Symbol.toStringTag, { value: "Module" }));
 function loader$7() {
   return redirect("/tempolis");
 }
 function action() {
   return redirect("/tempolis");
 }
-const route12 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route13 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   action,
   loader: loader$7
@@ -7501,7 +8492,7 @@ const route12 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.definePrope
 function loader$6() {
   return redirect("/tempolis/prospects");
 }
-const route13 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route14 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   loader: loader$6
 }, Symbol.toStringTag, { value: "Module" }));
@@ -7511,21 +8502,21 @@ function loader$5({
   const url = new URL(request.url);
   return redirect(`/tempolis/import${url.search}`);
 }
-const route14 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route15 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   loader: loader$5
 }, Symbol.toStringTag, { value: "Module" }));
 function loader$4() {
   return redirect("/tempolis/discover");
 }
-const route15 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route16 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   loader: loader$4
 }, Symbol.toStringTag, { value: "Module" }));
 function loader$3() {
   return redirect("/tempolis/settings");
 }
-const route16 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route17 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   loader: loader$3
 }, Symbol.toStringTag, { value: "Module" }));
@@ -7535,7 +8526,7 @@ function loader$2() {
 const batch = UNSAFE_withComponentProps(function BatchRedirect() {
   return null;
 });
-const route17 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route18 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   default: batch,
   loader: loader$2
@@ -7546,7 +8537,7 @@ function loader$1() {
 const twitter = UNSAFE_withComponentProps(function TwitterRedirect() {
   return null;
 });
-const route18 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route19 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   default: twitter,
   loader: loader$1
@@ -7557,12 +8548,12 @@ function loader() {
 const search = UNSAFE_withComponentProps(function SearchRedirect() {
   return null;
 });
-const route19 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const route20 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   default: search,
   loader
 }, Symbol.toStringTag, { value: "Module" }));
-const serverManifest = { "entry": { "module": "/assets/entry.client-B45ZdhYm.js", "imports": ["/assets/jsx-runtime-u17CrQMm.js", "/assets/chunk-OE4NN4TA-DOuj0hGT.js", "/assets/index-C0hqblHI.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-pzTPmsKe.js", "imports": ["/assets/jsx-runtime-u17CrQMm.js", "/assets/chunk-OE4NN4TA-DOuj0hGT.js", "/assets/index-C0hqblHI.js", "/assets/card-vTM3lGsb.js", "/assets/utils-BQHNewu7.js"], "css": ["/assets/root-TXUXC89k.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/root": { "id": "routes/_redirects/root", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/root-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_app": { "id": "routes/_app", "parentId": "root", "path": ":workspaceSlug", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/_app-V2ln9QPm.js", "imports": ["/assets/chunk-OE4NN4TA-DOuj0hGT.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/button-CvQmwb1I.js", "/assets/index-D3Aez1bm.js", "/assets/index-DpmgHXye.js", "/assets/index-DesLcHwm.js", "/assets/index-C3yXPApV.js", "/assets/utils-BQHNewu7.js", "/assets/index-DRlceVeN.js", "/assets/index-Bvl8UudE.js", "/assets/index-D4RkPWLA.js", "/assets/index-C0hqblHI.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "routes/_app", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-CCc0KV4Q.js", "imports": ["/assets/chunk-OE4NN4TA-DOuj0hGT.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-D4RkPWLA.js", "/assets/input-CVT0M0Si.js", "/assets/button-CvQmwb1I.js", "/assets/card-vTM3lGsb.js", "/assets/accordion-DlVUSEs4.js", "/assets/table-CbkYy7r8.js", "/assets/status-badge-D_T9qZn3.js", "/assets/utils-BQHNewu7.js", "/assets/send-CFz3_WwC.js", "/assets/index-DpmgHXye.js", "/assets/external-link-CGuRpFEE.js", "/assets/index-C0hqblHI.js", "/assets/index-D3Aez1bm.js", "/assets/index-C3yXPApV.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospects._index": { "id": "routes/prospects._index", "parentId": "routes/_app", "path": "prospects", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospects._index-DrTj2W7y.js", "imports": ["/assets/chunk-OE4NN4TA-DOuj0hGT.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/input-CVT0M0Si.js", "/assets/card-vTM3lGsb.js", "/assets/label-CRuF6lYJ.js", "/assets/index-C0hqblHI.js", "/assets/index-D3Aez1bm.js", "/assets/index-DpmgHXye.js", "/assets/index-DesLcHwm.js", "/assets/index-Bvl8UudE.js", "/assets/utils-BQHNewu7.js", "/assets/status-badge-D_T9qZn3.js", "/assets/table-CbkYy7r8.js", "/assets/search-CKQeJwCo.js", "/assets/external-link-CGuRpFEE.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "routes/_app", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-CxAacdYw.js", "imports": ["/assets/chunk-OE4NN4TA-DOuj0hGT.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-D4RkPWLA.js", "/assets/accordion-DlVUSEs4.js", "/assets/input-CVT0M0Si.js", "/assets/button-CvQmwb1I.js", "/assets/card-vTM3lGsb.js", "/assets/label-CRuF6lYJ.js", "/assets/textarea-C8ocjBql.js", "/assets/status-badge-D_T9qZn3.js", "/assets/utils-BQHNewu7.js", "/assets/index-DpmgHXye.js", "/assets/external-link-CGuRpFEE.js", "/assets/send-CFz3_WwC.js", "/assets/save-CSQhRxaK.js", "/assets/index-C0hqblHI.js", "/assets/index-D3Aez1bm.js", "/assets/index-C3yXPApV.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/import": { "id": "routes/import", "parentId": "routes/_app", "path": "import", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/import-DP6q4qBl.js", "imports": ["/assets/chunk-OE4NN4TA-DOuj0hGT.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-D4RkPWLA.js", "/assets/input-CVT0M0Si.js", "/assets/button-CvQmwb1I.js", "/assets/card-vTM3lGsb.js", "/assets/textarea-C8ocjBql.js", "/assets/index-D3Aez1bm.js", "/assets/index-DRlceVeN.js", "/assets/index-C3yXPApV.js", "/assets/utils-BQHNewu7.js", "/assets/send-CFz3_WwC.js", "/assets/index-DpmgHXye.js", "/assets/index-C0hqblHI.js", "/assets/index-Bvl8UudE.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "routes/_app", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-CiwrQWKq.js", "imports": ["/assets/chunk-OE4NN4TA-DOuj0hGT.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-D4RkPWLA.js", "/assets/button-CvQmwb1I.js", "/assets/card-vTM3lGsb.js", "/assets/index-DpmgHXye.js", "/assets/search-CKQeJwCo.js", "/assets/external-link-CGuRpFEE.js", "/assets/index-C0hqblHI.js", "/assets/utils-BQHNewu7.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/settings": { "id": "routes/settings", "parentId": "routes/_app", "path": "settings", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/settings-DD3lkHkI.js", "imports": ["/assets/chunk-OE4NN4TA-DOuj0hGT.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/input-CVT0M0Si.js", "/assets/button-CvQmwb1I.js", "/assets/card-vTM3lGsb.js", "/assets/label-CRuF6lYJ.js", "/assets/textarea-C8ocjBql.js", "/assets/save-CSQhRxaK.js", "/assets/index-DpmgHXye.js", "/assets/utils-BQHNewu7.js", "/assets/index-C0hqblHI.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.dashboard": { "id": "routes/api.extension.dashboard", "parentId": "root", "path": "api/extension/dashboard", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.dashboard-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.connection-status": { "id": "routes/api.extension.connection-status", "parentId": "root", "path": "api/extension/connection-status", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.connection-status-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.prospect": { "id": "routes/api.extension.prospect", "parentId": "root", "path": "api/extension/prospect", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.prospect-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/workspace": { "id": "routes/_redirects/workspace", "parentId": "root", "path": "workspace", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/workspace-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/prospects": { "id": "routes/_redirects/prospects", "parentId": "root", "path": "prospects", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/prospects-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/import": { "id": "routes/_redirects/import", "parentId": "root", "path": "import", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/import-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/discover": { "id": "routes/_redirects/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/discover-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/settings": { "id": "routes/_redirects/settings", "parentId": "root", "path": "settings", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/settings-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/batch": { "id": "routes/_redirects/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-BsT5-qgm.js", "imports": ["/assets/chunk-OE4NN4TA-DOuj0hGT.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/twitter": { "id": "routes/_redirects/twitter", "parentId": "root", "path": "twitter", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/twitter-CEizxzb8.js", "imports": ["/assets/chunk-OE4NN4TA-DOuj0hGT.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/search": { "id": "routes/_redirects/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-DRe9jh-Q.js", "imports": ["/assets/chunk-OE4NN4TA-DOuj0hGT.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-ae5fd672.js", "version": "ae5fd672", "sri": void 0 };
+const serverManifest = { "entry": { "module": "/assets/entry.client-2wUhN229.js", "imports": ["/assets/jsx-runtime-u17CrQMm.js", "/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/index-DZ8tZCut.js"], "css": [] }, "routes": { "root": { "id": "root", "parentId": void 0, "path": "", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": true, "module": "/assets/root-BPpYcmuQ.js", "imports": ["/assets/jsx-runtime-u17CrQMm.js", "/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/index-DZ8tZCut.js", "/assets/card-Cr8GqWWr.js", "/assets/utils-BQHNewu7.js"], "css": ["/assets/root-BLDTXd7B.css"], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/root": { "id": "routes/_redirects/root", "parentId": "root", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/root-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_app": { "id": "routes/_app", "parentId": "root", "path": ":workspaceSlug", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/_app-CUii-ugp.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/input-Dw36QX36.js", "/assets/button-DMbSIcQc.js", "/assets/index-Dced6aQt.js", "/assets/index-B2G4rFHg.js", "/assets/Combination-BoIzLXU0.js", "/assets/index-1Fqlo6p7.js", "/assets/utils-BQHNewu7.js", "/assets/index-DprgC5mT.js", "/assets/index-BebK7jfc.js", "/assets/search-DJhQTecO.js", "/assets/index-DASZgCjN.js", "/assets/index-DZ8tZCut.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/home": { "id": "routes/home", "parentId": "routes/_app", "path": void 0, "index": true, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/home-C39yIvUv.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-DASZgCjN.js", "/assets/input-Dw36QX36.js", "/assets/button-DMbSIcQc.js", "/assets/card-Cr8GqWWr.js", "/assets/accordion-D19wtHLW.js", "/assets/table-CLJka6TE.js", "/assets/status-badge-Dx0ymv7e.js", "/assets/utils-BQHNewu7.js", "/assets/send-BsrlMpbN.js", "/assets/index-B2G4rFHg.js", "/assets/external-link-CcltDUN6.js", "/assets/index-DZ8tZCut.js", "/assets/index-Dced6aQt.js", "/assets/index-1Fqlo6p7.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospects._index": { "id": "routes/prospects._index", "parentId": "routes/_app", "path": "prospects", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospects._index-BP9-Al-A.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/input-Dw36QX36.js", "/assets/card-Cr8GqWWr.js", "/assets/label-DE_wSpt2.js", "/assets/index-DZ8tZCut.js", "/assets/index-Dced6aQt.js", "/assets/index-B2G4rFHg.js", "/assets/Combination-BoIzLXU0.js", "/assets/index-BebK7jfc.js", "/assets/utils-BQHNewu7.js", "/assets/status-badge-Dx0ymv7e.js", "/assets/table-CLJka6TE.js", "/assets/search-DJhQTecO.js", "/assets/external-link-CcltDUN6.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/prospect.$id": { "id": "routes/prospect.$id", "parentId": "routes/_app", "path": "prospects/:id", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/prospect._id-CSLe-yUk.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-DASZgCjN.js", "/assets/accordion-D19wtHLW.js", "/assets/input-Dw36QX36.js", "/assets/button-DMbSIcQc.js", "/assets/card-Cr8GqWWr.js", "/assets/label-DE_wSpt2.js", "/assets/textarea-CZJ0QrxL.js", "/assets/status-badge-Dx0ymv7e.js", "/assets/utils-BQHNewu7.js", "/assets/index-B2G4rFHg.js", "/assets/external-link-CcltDUN6.js", "/assets/send-BsrlMpbN.js", "/assets/save-CfSTMNRR.js", "/assets/index-DZ8tZCut.js", "/assets/index-Dced6aQt.js", "/assets/index-1Fqlo6p7.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/import": { "id": "routes/import", "parentId": "routes/_app", "path": "import", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/import-CXyoOxMV.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-DASZgCjN.js", "/assets/input-Dw36QX36.js", "/assets/button-DMbSIcQc.js", "/assets/card-Cr8GqWWr.js", "/assets/textarea-CZJ0QrxL.js", "/assets/index-Dced6aQt.js", "/assets/index-DprgC5mT.js", "/assets/index-1Fqlo6p7.js", "/assets/utils-BQHNewu7.js", "/assets/send-BsrlMpbN.js", "/assets/index-B2G4rFHg.js", "/assets/index-DZ8tZCut.js", "/assets/index-BebK7jfc.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/discover": { "id": "routes/discover", "parentId": "routes/_app", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/discover-yK6KgCQc.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/index-DASZgCjN.js", "/assets/button-DMbSIcQc.js", "/assets/card-Cr8GqWWr.js", "/assets/index-B2G4rFHg.js", "/assets/search-DJhQTecO.js", "/assets/external-link-CcltDUN6.js", "/assets/index-DZ8tZCut.js", "/assets/utils-BQHNewu7.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/settings": { "id": "routes/settings", "parentId": "routes/_app", "path": "settings", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/settings-D0GDTyFG.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js", "/assets/jsx-runtime-u17CrQMm.js", "/assets/input-Dw36QX36.js", "/assets/button-DMbSIcQc.js", "/assets/card-Cr8GqWWr.js", "/assets/label-DE_wSpt2.js", "/assets/textarea-CZJ0QrxL.js", "/assets/save-CfSTMNRR.js", "/assets/index-B2G4rFHg.js", "/assets/utils-BQHNewu7.js", "/assets/index-DZ8tZCut.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.dashboard": { "id": "routes/api.extension.dashboard", "parentId": "root", "path": "api/extension/dashboard", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.dashboard-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.connection-status": { "id": "routes/api.extension.connection-status", "parentId": "root", "path": "api/extension/connection-status", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.connection-status-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.extension.prospect": { "id": "routes/api.extension.prospect", "parentId": "root", "path": "api/extension/prospect", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": false, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.extension.prospect-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/api.prospect-search": { "id": "routes/api.prospect-search", "parentId": "root", "path": "api/prospect-search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/api.prospect-search-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/workspace": { "id": "routes/_redirects/workspace", "parentId": "root", "path": "workspace", "index": void 0, "caseSensitive": void 0, "hasAction": true, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/workspace-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/prospects": { "id": "routes/_redirects/prospects", "parentId": "root", "path": "prospects", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/prospects-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/import": { "id": "routes/_redirects/import", "parentId": "root", "path": "import", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/import-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/discover": { "id": "routes/_redirects/discover", "parentId": "root", "path": "discover", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/discover-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/settings": { "id": "routes/_redirects/settings", "parentId": "root", "path": "settings", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": false, "hasErrorBoundary": false, "module": "/assets/settings-l0sNRNKZ.js", "imports": [], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/batch": { "id": "routes/_redirects/batch", "parentId": "root", "path": "batch", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/batch-vz16SxeB.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/twitter": { "id": "routes/_redirects/twitter", "parentId": "root", "path": "twitter", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/twitter-D1s9nkQh.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 }, "routes/_redirects/search": { "id": "routes/_redirects/search", "parentId": "root", "path": "search", "index": void 0, "caseSensitive": void 0, "hasAction": false, "hasLoader": true, "hasClientAction": false, "hasClientLoader": false, "hasClientMiddleware": false, "hasDefaultExport": true, "hasErrorBoundary": false, "module": "/assets/search-VQZaUIvj.js", "imports": ["/assets/chunk-OE4NN4TA-CpPYO4pa.js"], "css": [], "clientActionModule": void 0, "clientLoaderModule": void 0, "clientMiddlewareModule": void 0, "hydrateFallbackModule": void 0 } }, "url": "/assets/manifest-84aa2690.js", "version": "84aa2690", "sri": void 0 };
 const assetsBuildDirectory = "build/client";
 const basename = "/";
 const future = { "unstable_optimizeDeps": false, "unstable_passThroughRequests": false, "unstable_subResourceIntegrity": false, "unstable_trailingSlashAwareDataRequests": false, "unstable_previewServerPrerendering": false, "v8_middleware": true, "v8_splitRouteModules": false, "v8_viteEnvironmentApi": false };
@@ -7669,13 +8660,21 @@ const routes = {
     caseSensitive: void 0,
     module: route11
   },
+  "routes/api.prospect-search": {
+    id: "routes/api.prospect-search",
+    parentId: "root",
+    path: "api/prospect-search",
+    index: void 0,
+    caseSensitive: void 0,
+    module: route12
+  },
   "routes/_redirects/workspace": {
     id: "routes/_redirects/workspace",
     parentId: "root",
     path: "workspace",
     index: void 0,
     caseSensitive: void 0,
-    module: route12
+    module: route13
   },
   "routes/_redirects/prospects": {
     id: "routes/_redirects/prospects",
@@ -7683,7 +8682,7 @@ const routes = {
     path: "prospects",
     index: void 0,
     caseSensitive: void 0,
-    module: route13
+    module: route14
   },
   "routes/_redirects/import": {
     id: "routes/_redirects/import",
@@ -7691,7 +8690,7 @@ const routes = {
     path: "import",
     index: void 0,
     caseSensitive: void 0,
-    module: route14
+    module: route15
   },
   "routes/_redirects/discover": {
     id: "routes/_redirects/discover",
@@ -7699,7 +8698,7 @@ const routes = {
     path: "discover",
     index: void 0,
     caseSensitive: void 0,
-    module: route15
+    module: route16
   },
   "routes/_redirects/settings": {
     id: "routes/_redirects/settings",
@@ -7707,7 +8706,7 @@ const routes = {
     path: "settings",
     index: void 0,
     caseSensitive: void 0,
-    module: route16
+    module: route17
   },
   "routes/_redirects/batch": {
     id: "routes/_redirects/batch",
@@ -7715,7 +8714,7 @@ const routes = {
     path: "batch",
     index: void 0,
     caseSensitive: void 0,
-    module: route17
+    module: route18
   },
   "routes/_redirects/twitter": {
     id: "routes/_redirects/twitter",
@@ -7723,7 +8722,7 @@ const routes = {
     path: "twitter",
     index: void 0,
     caseSensitive: void 0,
-    module: route18
+    module: route19
   },
   "routes/_redirects/search": {
     id: "routes/_redirects/search",
@@ -7731,7 +8730,7 @@ const routes = {
     path: "search",
     index: void 0,
     caseSensitive: void 0,
-    module: route19
+    module: route20
   }
 };
 const allowedActionOrigins = false;

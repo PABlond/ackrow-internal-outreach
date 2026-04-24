@@ -54,6 +54,9 @@ type Pages = {
   "/api/extension/prospect": {
     params: {};
   };
+  "/api/prospect-search": {
+    params: {};
+  };
   "/workspace": {
     params: {};
   };
@@ -83,7 +86,7 @@ type Pages = {
 type RouteFiles = {
   "root.tsx": {
     id: "root";
-    page: "/" | "/:workspaceSlug" | "/:workspaceSlug/prospects" | "/:workspaceSlug/prospects/:id" | "/:workspaceSlug/import" | "/:workspaceSlug/discover" | "/:workspaceSlug/settings" | "/api/extension/dashboard" | "/api/extension/connection-status" | "/api/extension/prospect" | "/workspace" | "/prospects" | "/import" | "/discover" | "/settings" | "/batch" | "/twitter" | "/search";
+    page: "/" | "/:workspaceSlug" | "/:workspaceSlug/prospects" | "/:workspaceSlug/prospects/:id" | "/:workspaceSlug/import" | "/:workspaceSlug/discover" | "/:workspaceSlug/settings" | "/api/extension/dashboard" | "/api/extension/connection-status" | "/api/extension/prospect" | "/api/prospect-search" | "/workspace" | "/prospects" | "/import" | "/discover" | "/settings" | "/batch" | "/twitter" | "/search";
   };
   "routes/_redirects/root.ts": {
     id: "routes/_redirects/root";
@@ -128,6 +131,10 @@ type RouteFiles = {
   "routes/api.extension.prospect.ts": {
     id: "routes/api.extension.prospect";
     page: "/api/extension/prospect";
+  };
+  "routes/api.prospect-search.ts": {
+    id: "routes/api.prospect-search";
+    page: "/api/prospect-search";
   };
   "routes/_redirects/workspace.ts": {
     id: "routes/_redirects/workspace";
@@ -176,6 +183,7 @@ type RouteModules = {
   "routes/api.extension.dashboard": typeof import("./app/routes/api.extension.dashboard.ts");
   "routes/api.extension.connection-status": typeof import("./app/routes/api.extension.connection-status.ts");
   "routes/api.extension.prospect": typeof import("./app/routes/api.extension.prospect.ts");
+  "routes/api.prospect-search": typeof import("./app/routes/api.prospect-search.ts");
   "routes/_redirects/workspace": typeof import("./app/routes/_redirects/workspace.ts");
   "routes/_redirects/prospects": typeof import("./app/routes/_redirects/prospects.ts");
   "routes/_redirects/import": typeof import("./app/routes/_redirects/import.ts");

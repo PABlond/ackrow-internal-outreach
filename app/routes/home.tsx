@@ -73,6 +73,13 @@ export default function Home() {
   );
   const todoItems = buildTodoItems(data);
 
+  useEffect(() => {
+    if (window.location.hash !== "#todos") return;
+    window.requestAnimationFrame(() => {
+      document.getElementById("todos")?.scrollIntoView({ block: "start" });
+    });
+  }, [data.workspace.slug]);
+
   return (
     <div className="px-6 py-8">
       <div className="mx-auto max-w-7xl space-y-8">
@@ -188,7 +195,7 @@ export default function Home() {
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-8">
-            <section>
+            <section id="todos" className="scroll-mt-16">
               <SectionTitle title="Todo" detail="Highest-priority actions across the pipeline." />
               <div className="mt-3 grid gap-3">
                 {todoItems.length ? (

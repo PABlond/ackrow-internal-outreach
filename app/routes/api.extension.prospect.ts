@@ -1,11 +1,12 @@
 import { data, redirect } from "react-router";
 
 import type { Route } from "./+types/api.extension.prospect";
-import { analyzeProspectTable, analyzeTwitterProspectTable, prospectEvidenceToTable } from "~/lib/batch.server";
+import { analyzeLinkedInExtensionProspect, analyzeTwitterExtensionProspect } from "~/lib/batch.server";
 import {
   findProspectByProfileUrl,
   getWorkspaceBySlug,
   importAnalyzedProspects,
+  saveProspectEvidence,
   setProspectOutreachPreference,
   type Workspace,
 } from "~/lib/outreach.server";
@@ -52,11 +53,17 @@ export async function action({ request }: Route.ActionArgs) {
   const existingId = await findProspectByProfileUrl(profileUrl, workspace.id);
   if (existingId) {
     await setProspectOutreachPreference(existingId, normalizeOutreachMode(payload.outreachMode));
+    await saveProspectEvidence({
+      prospectId: existingId,
+      workspaceId: workspace.id,
+      sourceChannel: "linkedin",
+      captureSource: "extension",
+      payload: { ...payload, profileUrl, sourceChannel: "linkedin" },
+    });
     return respond(payload, existingId, true, workspace, request);
   }
 
-  const table = prospectEvidenceToTable({ ...payload, profileUrl });
-  const analysis = await analyzeProspectTable(table, workspace);
+  const analysis = await analyzeLinkedInExtensionProspect({ ...payload, profileUrl }, workspace);
   await importAnalyzedProspects(analysis.prospects, workspace.id);
   const id = await findProspectByProfileUrl(profileUrl, workspace.id);
 
@@ -65,6 +72,13 @@ export async function action({ request }: Route.ActionArgs) {
   }
 
   await setProspectOutreachPreference(id, normalizeOutreachMode(payload.outreachMode));
+  await saveProspectEvidence({
+    prospectId: id,
+    workspaceId: workspace.id,
+    sourceChannel: "linkedin",
+    captureSource: "extension",
+    payload: { ...payload, profileUrl, sourceChannel: "linkedin" },
+  });
   return respond(payload, id, false, workspace, request);
 }
 
@@ -76,19 +90,17 @@ async function handleTwitterPayload(payload: ExtensionPayload, workspace: Worksp
 
   const existingId = await findProspectByProfileUrl(profileUrl, workspace.id);
   if (existingId) {
+    await saveProspectEvidence({
+      prospectId: existingId,
+      workspaceId: workspace.id,
+      sourceChannel: "twitter",
+      captureSource: "extension",
+      payload: { ...payload, profileUrl, twitterUrl: profileUrl, sourceChannel: "twitter" },
+    });
     return respond(payload, existingId, true, workspace, request);
   }
 
-  const table = prospectEvidenceToTable({
-    ...payload,
-    profileUrl,
-    signals: [
-      payload.signals,
-      payload.activity ? `Visible posts: ${payload.activity}` : "",
-      payload.rawText ? `Visible page text: ${payload.rawText}` : "",
-    ].filter(Boolean).join("\n\n"),
-  });
-  const analysis = await analyzeTwitterProspectTable(table, workspace);
+  const analysis = await analyzeTwitterExtensionProspect({ ...payload, profileUrl, twitterUrl: profileUrl }, workspace);
   await importAnalyzedProspects(analysis.prospects, workspace.id);
   const id = await findProspectByProfileUrl(profileUrl, workspace.id);
 
@@ -96,6 +108,13 @@ async function handleTwitterPayload(payload: ExtensionPayload, workspace: Worksp
     return data({ ok: false, error: "Twitter/X profile analyzed but not found after import." }, { status: 500, headers: corsHeaders(request) });
   }
 
+  await saveProspectEvidence({
+    prospectId: id,
+    workspaceId: workspace.id,
+    sourceChannel: "twitter",
+    captureSource: "extension",
+    payload: { ...payload, profileUrl, twitterUrl: profileUrl, sourceChannel: "twitter" },
+  });
   return respond(payload, id, false, workspace, request);
 }
 

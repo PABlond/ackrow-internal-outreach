@@ -15,6 +15,7 @@ export default [
   route("api/extension/dashboard", "routes/api.extension.dashboard.ts"),
   route("api/extension/connection-status", "routes/api.extension.connection-status.ts"),
   route("api/extension/prospect", "routes/api.extension.prospect.ts"),
+  route("api/prospect-search", "routes/api.prospect-search.ts"),
 
   route("workspace", "routes/_redirects/workspace.ts"),
   route("prospects", "routes/_redirects/prospects.ts"),
